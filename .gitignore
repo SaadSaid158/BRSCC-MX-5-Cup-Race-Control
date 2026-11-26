@@ -1,0 +1,7 @@
+dist/
+*.zip
+reports/
+*_trace.csv
+*_excursions.csv
+.DS_Store
+Thumbs.db
