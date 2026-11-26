@@ -8,6 +8,7 @@ local M = {}
 M.defaults = {
   hudMode = "practice",       -- "practice" = full information (mock-ups), "race" = realistic
   hudScale = 1.0,
+  hudGlass = true,            -- glass panels (blurred scene behind them); false = solid monitor black
   postsSource = "auto",       -- "auto" = recorded map if one exists, else from geometry; "even"
   trackLimitWheels = 1,       -- NCR App.7 1.6b reading: any wheel beyond (1). 4 = AC's own cut rule
   trackLimitMinS = 0.3,

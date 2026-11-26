@@ -109,8 +109,10 @@ _G.ui = setmetatable({
   dwriteDrawText = function(t, size, p, c)
     local bold = (fontStack[#fontStack] or ""):find("Bold")
     t = t:gsub("&", "&amp;"):gsub("<", "&lt;")
-    draws[#draws + 1] = ('<text x="%.1f" y="%.1f" font-size="%.1f" font-family="Segoe UI,Arial" font-weight="%s" fill="%s" dominant-baseline="hanging">%s</text>'):format(p.x, p.y, size, bold and 700 or 400, col(c), t)
+    draws[#draws + 1] = ('<text x="%.1f" y="%.1f" font-size="%.1f" font-family="Barlow Condensed,Arial Narrow,Arial" font-weight="%s" fill="%s" dominant-baseline="hanging">%s</text>'):format(p.x, p.y, size, bold and 700 or 400, col(c), t)
   end,
+  drawQuadFilled = function(a, b, c, d, k) draws[#draws + 1] = ('<polygon points="%.1f,%.1f %.1f,%.1f %.1f,%.1f %.1f,%.1f" fill="%s"/>'):format(a.x, a.y, b.x, b.y, c.x, c.y, d.x, d.y, col(k)) end,
+  drawLine = function(a, b, k, t) draws[#draws + 1] = ('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="%.1f"/>'):format(a.x, a.y, b.x, b.y, col(k), t or 1) end,
   tabBar = function(_, _, f) f() end,
   tabItem = function(_, _, f) f() end,
   slider = function(_, v) return v, false end,
@@ -119,13 +121,37 @@ _G.drawsSVG = function(path, W, H)
   local f = realIO.open(path, "w")
   if not f then return end
   f:write(('<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6d88a3"/><stop offset=".45" stop-color="#9fb3c4"/><stop offset=".46" stop-color="#4c5a48"/><stop offset=".62" stop-color="#2c2f33"/><stop offset="1" stop-color="#111"/></linearGradient></defs><rect width="100%%" height="100%%" fill="url(#g)"/>'):format(W, H))
+  local fonts = os.getenv("HUD_FONTS")   -- folder URL holding the bundled TTFs, for a faithful preview
+  if fonts then
+    f:write(('<style>@font-face{font-family:"Barlow Condensed";font-weight:400;src:url("%s/BarlowCondensed-Medium.ttf")}' ..
+      '@font-face{font-family:"Barlow Condensed";font-weight:700;src:url("%s/BarlowCondensed-Bold.ttf")}</style>'):format(fonts, fonts))
+  end
   f:write(table.concat(draws, "\n"))
   f:write("</svg>")
   f:close()
 end
 _G.clearDraws = function() draws = {} end
 _G.vec2 = function(x, y) return { x = x, y = y } end
-_G.rgbm = setmetatable({ colors = {} }, { __call = function(_, r, g, b, m) return { r, g, b, m } end })
+-- HUD windows draw from their own origin; the harness shifts every point by the window's place
+local OX, OY = 0, 0
+for _, k in ipairs({ "drawRectFilled", "drawRect", "drawTriangleFilled", "drawCircleFilled", "drawQuadFilled", "drawLine", "dwriteDrawText" }) do
+  local f = rawget(ui, k)
+  rawset(ui, k, function(...)
+    local a = { ... }
+    for i = 1, select("#", ...) do
+      local p = a[i]
+      if type(p) == "table" and p.x and p.y and not p.r then a[i] = { x = p.x + OX, y = p.y + OY } end
+    end
+    return f(unpack(a, 1, select("#", ...)))
+  end)
+end
+-- a default layout, as a driver might place the panels on a 1920x1080 screen
+local WINDOWS = { { "rcWinFlags", 560, 24 }, { "rcWinStrip", 640, 180 }, { "rcWinMessages", 600, 258 },
+  { "rcWinTiming", 36, 640 }, { "rcWinRecord", 1584, 640 }, { "rcWinPitBoard", 1680, 340 } }
+_G.drawWindows = function()
+  for _, w in ipairs(WINDOWS) do OX, OY = w[2], w[3]; script[w[1]](); OX, OY = 0, 0 end
+end
+_G.rgbm = setmetatable({ colors = {} }, { __call = function(_, r, g, b, m) return { r, g, b, m, r = r, g = g, b = b, mult = m } end })
 
 dofile(APP .. "brscc_race_control.lua")
 
@@ -151,7 +177,7 @@ local function tick(n, f)
     end
     script.rcUpdate(dt)
     clearDraws()
-    script.rcHud(dt)
+    drawWindows()
     if _G.afterHud then _G.afterHud() end
     script.rcWindow(dt)
     script.rcSettings(dt)

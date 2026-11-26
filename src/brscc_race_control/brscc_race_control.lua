@@ -11,8 +11,8 @@ local D = require("detect")
 local YP = require("yellowpass")
 local ST = require("stewards")
 local AI = require("ai")
-local HUD_P = require("hud_practice")
-local HUD_R = require("hud_race")
+local HP = require("hud_panels")
+local HC = require("hud_common")
 local SET = require("settings")
 local AP = require("autoposts")
 local GP = require("gaps")
@@ -506,8 +506,8 @@ update = function(dt)
 end
 
 -- HUD view model -------------------------------------------------------------------------
--- One view table feeds both renderers (hud_practice.lua / hud_race.lua), so race mode can be
--- finished later without touching the race-control logic.
+-- One view table feeds every HUD window (hud_panels.lua); practice and race mode only differ in
+-- which panels draw, so race mode can grow without touching the race-control logic.
 local function short(i)
   local n = name(i)
   return n:match("(%S+)$") or n
@@ -542,12 +542,14 @@ local function buildView()
   local ui_ = 1   -- uiScale lives on ac.StateUi (ac.getUI()), not on the sim state
   pcall(function() ui_ = ac.getUI().uiScale or 1 end)
   if not ui_ or ui_ <= 0 then ui_ = 1 end
-  local v = { scale = s, W = CX.get(sim, "windowWidth", 1920) / ui_, H = CX.get(sim, "windowHeight", 1080) / ui_ }
+  local v = { scale = s, W = CX.get(sim, "windowWidth", 1920) / ui_, H = CX.get(sim, "windowHeight", 1080) / ui_,
+    mode = SET.get("hudMode"), t = now, glass = SET.get("hudGlass") }
 
   -- course flag at the player's position (same logic the AI obeys)
   local lvl, k = F.levelFor(G.flags, me.splinePosition, L)
   if G.playerLevel ~= nil then lvl = G.playerLevel end
   local post = G.map[k].name
+  local postNo = tonumber(post:match("Post (%d+)"))
   local hazAhead = nil
   for _, h in ipairs(G.hazards or {}) do
     local dist = S.ahead(me.splinePosition, h.spline, L)
@@ -556,11 +558,11 @@ local function buildView()
   local where = post .. (hazAhead and (" · incident %d m ahead"):format(math.floor(hazAhead / 10 + 0.5) * 10) or "")
   local course = nil
   if lvl == 2 then
-    course = { lamps = { "yellow", "yellow" }, title = "DOUBLE YELLOW", line1 = "Slow · be ready to stop · NO OVERTAKING", line2 = where }
+    course = { lamps = { "yellow", "yellow" }, title = "DOUBLE YELLOW", line1 = "Slow · be ready to stop · NO OVERTAKING", line2 = where, post = postNo }
   elseif lvl == 1 then
-    course = { lamps = { "yellow" }, title = "YELLOW", line1 = "Slow down · NO OVERTAKING", line2 = where }
+    course = { lamps = { "yellow" }, title = "YELLOW", line1 = "Slow down · NO OVERTAKING", line2 = where, post = postNo }
   elseif G.playerGreen then
-    course = { lamps = { "green" }, title = "GREEN", line1 = "Track clear · racing resumes", line2 = post }
+    course = { lamps = { "green" }, title = "GREEN", line1 = "Track clear · racing resumes", line2 = post, post = postNo }
   end
 
   -- personal boards (black flag > drive-through > black/white)
@@ -655,18 +657,30 @@ local function buildView()
   return v
 end
 
-function script.rcHud(dt)
-  if not G or not G.kind or sim.isOnlineRace then return end
-  if not ac.getCar(0) then return end
+-- HUD windows: each panel is its own CSP app window (manifest WINDOW_2..7), so the driver can move
+-- it, hide it from the app bar and keep it clear of their other apps. The view is built once per
+-- frame and shared.
+local arrange = false            -- show every panel with sample content, to place them (not saved)
+local viewCache, viewAt = nil, nil
+local function hudWindow(draw)
+  if not G or not G.kind or sim.isOnlineRace or not ac.getCar(0) then return end
   local ok, err = pcall(function()
-    local v = buildView()
-    if SET.get("hudMode") == "race" then HUD_R.draw(v) else HUD_P.draw(v) end
+    if viewAt ~= G.clock or not viewCache then viewCache, viewAt = buildView(), G.clock end
+    HC.ctx = viewCache
+    local w, h = draw(viewCache, arrange)
+    if w then ui.dummy(vec2(w, h)) end
   end)
   if not ok then
     G.hudErr = tostring(err)
     if not G.hudErrLogged then G.hudErrLogged = true; ac.log("BRSCC RC HUD error: " .. G.hudErr) end
   end
 end
+function script.rcWinFlags() hudWindow(HP.flags) end
+function script.rcWinStrip() hudWindow(HP.strip) end
+function script.rcWinMessages() hudWindow(HP.messages) end
+function script.rcWinTiming() hudWindow(HP.timing) end
+function script.rcWinRecord() hudWindow(HP.record) end
+function script.rcWinPitBoard() hudWindow(HP.pitBoard) end
 
 -- Settings window ---------------------------------------------------------------------------
 local function radio(label, key, value)
@@ -697,6 +711,11 @@ function script.rcSettings(dt)
       radio("Race: realistic (flags at the post, boards at the line, pit board) [basic]", "hudMode", "race")
       ui.header("Size")
       slider("HUD scale", "hudScale", 0.6, 1.5, "%.2f")
+      check("Glass panels (the blur needs CSP Graphics Adjustments; the tint works without)", "hudGlass")
+      ui.header("Layout")
+      if ui.checkbox("Arrange panels: show every panel with sample content", arrange) then arrange = not arrange end
+      ui.textWrapped("Each panel is its own app window: drag it where you want it, and switch it on or off " ..
+        "from the app bar like any other app. CSP remembers where you put them.")
     end)
     ui.tabItem("Rules", nil, function()
       ui.header("Track limits (NCR Ch.12 App.7 1.6 / 1.11)")
