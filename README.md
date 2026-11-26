@@ -27,7 +27,7 @@ I'm using it to train for a real MX-5 Cup season, so the aim is realism over con
 5. Start any **offline** session. The app runs automatically. Two windows are in the apps bar: **Settings** and **Race Control**.
 
 ## How this was made
-This project was **vibe coded**. I directed it and tested it in-game, and the code, research and tests were written by Claude (Anthropic's AI) in Claude Code. My part was the idea, the decisions and the testing; almost none of the code is hand-written.
+This project was **vibe coded**. I directed it and tested it in-game, and the code, research and tests were written by Claude Opus 5.5 (Anthropic's AI) in Claude Code. My part was the idea, the decisions and the testing; almost none of the code is hand-written.
 
 The rule details all come from the official regulations: every value in [`rules.lua`](src/brscc_race_control/rules.lua) cites its source.
 
