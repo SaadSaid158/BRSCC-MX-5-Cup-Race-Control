@@ -1,6 +1,7 @@
 -- End-to-end simulation: runs the real app script against a fake CSP API (signatures per API_NOTES.md).
 --   luajit tests/sim.lua
 local APP = "src/brscc_race_control/"
+local realIO = io
 package.path = APP .. "?.lua;" .. package.path
 
 local pass, fail = 0, 0
@@ -14,7 +15,7 @@ local cars, calls = {}, {}
 local sim = {
   isOnlineRace = false, isPaused = false, isReplayActive = false,
   raceSessionType = 3, currentSessionIndex = 0, isSessionStarted = true, isSessionFinished = false,
-  currentSessionTime = 0, sessionTimeLeft = 0, carsCount = N, trackLengthM = L,
+  currentSessionTime = 0, sessionTimeLeft = 0, carsCount = N, trackLengthM = L, time = 0,
   windowWidth = 1920, windowHeight = 1080, uiScale = 1,
 }
 local session = { type = 3, laps = 10, isTimedRace = false, leaderCompletedLaps = 0 }
@@ -22,7 +23,7 @@ for i = 0, N - 1 do
   cars[i] = { index = i, isAIControlled = i ~= 0, speedKmh = 0, splinePosition = (0.99 - i * 0.004) % 1,
     lapCount = 0, wheelsOutside = 0, isInPitlane = false, isInPit = false, isRetired = false,
     isRaceFinished = false, isLastLapValid = true, previousLapTimeMs = 60000, racePosition = i + 1,
-    collidedWith = 0, collisionDepth = 0, baseKmh = 120, topCap = math.huge, parked = false }
+    collidedWith = 0, collisionDepth = 0, baseKmh = 120, topCap = math.huge, parked = false, bestLapTimeMs = 59000 }
 end
 
 local function rec(name, ...) calls[#calls + 1] = { name, ... } end
@@ -34,6 +35,16 @@ _G.ac = {
   FolderID = { ScriptOrigin = 1024, ACDocuments = 31 },
   getSim = function() return sim end,
   getSession = function() return session end,
+  hasTrackSpline = function() return true end,
+  trackProgressToWorldCoordinate = function(t)
+    local d = (t % 1) * L
+    local st, r = 600, 400 / math.pi        -- 2 x 600 m straights + 2 hairpins of 400 m
+    if d < st then return { x = d, z = 0 } end d = d - st
+    if d < 400 then local a = d / r; return { x = st + r * math.sin(a), z = r - r * math.cos(a) } end d = d - 400
+    if d < st then return { x = st - d, z = 2 * r } end d = d - st
+    local a = d / r; return { x = -r * math.sin(a), z = r + r * math.cos(a) }
+  end,
+  INIConfig = { trackData = function() return { sections = { SECTION_0 = { IN = { "0.30" }, OUT = { "0.50" }, TEXT = { "Hairpin" } } } } end },
   getCar = function(i) return cars[i] end,
   iterateCars = function()                        -- 1-based loop index, like CSP
     local k = 0
@@ -43,7 +54,7 @@ _G.ac = {
   getTrackFullID = function() return "fake_track" end,
   getFolder = function(id) return id == 1024 and APP or "/tmp/claude-0/brscc-sim-docs" end,
   setMessage = function(t, d, ty) messages[#messages + 1] = d end,
-  log = function() end,
+  log = function(m) if tostring(m):find("HUD error") then _G.hudError = m end end,
   onSessionStart = function() end,
   onCarCollision = function() end,
 }
@@ -62,7 +73,41 @@ _G.io = { fileExists = function() return false end, load = function() end,
   save = function(p, c) rec("save", p, c) end, createDir = function() end }
 _G.JSON = { parse = function() end, stringify = function() return "{}" end }
 _G.script = {}
-_G.ui = setmetatable({}, { __index = function() return function() end end })
+-- ui mock: records draw calls so the HUD can be rendered to SVG for a visual check
+local draws = {}
+local function col(c) return c and ("rgba(%d,%d,%d,%.2f)"):format((c[1] or 1) * 255, (c[2] or 1) * 255, (c[3] or 1) * 255, c[4] or 1) or "#fff" end
+local fontStack = {}
+_G.ui = setmetatable({
+  drawRectFilled = function(a, b, c, r) draws[#draws + 1] = ('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" rx="%.1f" fill="%s"/>'):format(a.x, a.y, b.x - a.x, b.y - a.y, r or 0, col(c)) end,
+  drawRect = function(a, b, c, r, _, t) draws[#draws + 1] = ('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" rx="%.1f" fill="none" stroke="%s" stroke-width="%.1f"/>'):format(a.x, a.y, b.x - a.x, b.y - a.y, r or 0, col(c), t or 1) end,
+  drawTriangleFilled = function(a, b, c, k) draws[#draws + 1] = ('<polygon points="%.1f,%.1f %.1f,%.1f %.1f,%.1f" fill="%s"/>'):format(a.x, a.y, b.x, b.y, c.x, c.y, col(k)) end,
+  drawCircleFilled = function(p, r, c) draws[#draws + 1] = ('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s"/>'):format(p.x, p.y, r, col(c)) end,
+  pushDWriteFont = function(f) fontStack[#fontStack + 1] = f end,
+  popDWriteFont = function() fontStack[#fontStack] = nil end,
+  measureDWriteText = function(t, size)
+    local bold = (fontStack[#fontStack] or ""):find("Bold")
+    local w = 0
+    for ch in t:gmatch("[%z\1-\127\194-\244][\128-\191]*") do w = w + ((ch:match("[A-Z0-9]") and 0.62) or 0.5) end
+    return { x = w * size * (bold and 1.04 or 1), y = size * 1.2 }
+  end,
+  dwriteDrawText = function(t, size, p, c)
+    local bold = (fontStack[#fontStack] or ""):find("Bold")
+    t = t:gsub("&", "&amp;"):gsub("<", "&lt;")
+    draws[#draws + 1] = ('<text x="%.1f" y="%.1f" font-size="%.1f" font-family="Segoe UI,Arial" font-weight="%s" fill="%s" dominant-baseline="hanging">%s</text>'):format(p.x, p.y, size, bold and 700 or 400, col(c), t)
+  end,
+  tabBar = function(_, _, f) f() end,
+  tabItem = function(_, _, f) f() end,
+  slider = function(_, v) return v, false end,
+}, { __index = function() return function() end end })
+_G.drawsSVG = function(path, W, H)
+  local f = realIO.open(path, "w")
+  if not f then return end
+  f:write(('<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6d88a3"/><stop offset=".45" stop-color="#9fb3c4"/><stop offset=".46" stop-color="#4c5a48"/><stop offset=".62" stop-color="#2c2f33"/><stop offset="1" stop-color="#111"/></linearGradient></defs><rect width="100%%" height="100%%" fill="url(#g)"/>'):format(W, H))
+  f:write(table.concat(draws, "\n"))
+  f:write("</svg>")
+  f:close()
+end
+_G.clearDraws = function() draws = {} end
 _G.vec2 = function(x, y) return { x = x, y = y } end
 _G.rgbm = setmetatable({ colors = {} }, { __call = function(_, r, g, b, m) return { r, g, b, m } end })
 
@@ -88,8 +133,12 @@ local function tick(n, f)
       end
     end
     script.rcUpdate(dt)
+    clearDraws()
     script.rcHud(dt)
+    if _G.afterHud then _G.afterHud() end
     script.rcWindow(dt)
+    script.rcSettings(dt)
+    sim.time = t * 1000
   end
 end
 local function lastTop(i)
@@ -107,6 +156,13 @@ tick(60)  -- 3 s
 local G_msgs = table.concat(messages, " | ")
 check("incident announced", G_msgs:find("Driver 9") ~= nil or true)
 -- run until cars approach car 9's position from behind (they lap round)
+local SNAP = os.getenv("HUD_SNAPSHOTS")   -- directory to write HUD SVGs into (optional)
+local snapped = {}
+local function snap(name) if SNAP and not snapped[name] then snapped[name] = true; drawsSVG(SNAP .. "/" .. name .. ".svg", 1920, 1080) end end
+_G.afterHud = function()
+  local d = ((cars[9].splinePosition - cars[0].splinePosition) % 1) * L
+  if cars[9].stopped and d > 150 and d < 260 then snap("practice_double_yellow") end
+end
 local sawCap, minCap, pastCapped = false, math.huge, 0
 tick(1200, function(i, c)
   if i ~= 9 and c.isAIControlled and c.topCap < math.huge then
@@ -154,9 +210,11 @@ end
 for n = 1, 6 do
   cars[0].wheels = wheels(false, 2); cars[0].wheelsOutside = 2; tick(10)
   cars[0].wheels = wheels(true, 0); cars[0].wheelsOutside = 0; tick(30)
+  if n == 5 then tick(2); snap("practice_drive_through") end
   if n < 6 then waitLap(cars[0]) end
 end
 -- a 2nd excursion in the same lap as a signal must NOT escalate (App.7 1.11): checked in unit tests
+check("HUD drew without errors through yellow + penalties", _G.hudError == nil, _G.hudError)
 local pens = {}
 for _, c in ipairs(calls) do if c[1] == "penalty" then pens[#pens + 1] = c[2] end end
 check("player drive-through via AC MandatoryPits", pens[1] == 1, pens[1])
@@ -193,6 +251,15 @@ cars[6].isRequestingPitStop = false
 local off4 = false
 for _, c in ipairs(calls) do if c[1] == "pit" and c[2] == 4 and c[3] == false then off4 = true end end
 check("pit request cleared after drive-through served", off4)
+
+-- 6c. race-mode HUD: pit board + line board shown just after crossing the line
+require("settings").set("hudMode", "race")
+_G.afterHud = nil
+do local l = cars[1].lapCount; local l0 = cars[0].lapCount
+  while cars[0].lapCount == l0 do tick(1) end
+  tick(10); snap("race_mode_pitboard") end
+check("race-mode HUD drew without errors", _G.hudError == nil, _G.hudError)
+require("settings").set("hudMode", "practice")
 
 -- 7. finish + report
 for i = 0, N - 1 do cars[i].isRaceFinished = true end

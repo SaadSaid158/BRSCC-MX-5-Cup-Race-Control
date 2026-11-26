@@ -1,6 +1,7 @@
 -- BRSCC Race Control: offline race control for the BRSCC Mazda MX-5 Championship (2026 regs + MSUK NCR).
--- Slice 1+2+3+4: marshal sectors, yellow / double yellow, AI compliance, overtaking under yellow
--- with give-back, track limits ladder, drive-through / black flag, provisional report.
+-- Marshal posts (auto from geometry / recorded / even), yellow / double yellow, AI compliance,
+-- overtaking under yellow with give-back, track limits ladder, drive-through / black flag, AI pit
+-- guard, provisional report. Two windows: Settings and Race Control. Two HUD modes: practice / race.
 -- Every rule lives in rules.lua with its reference. API usage is documented in API_NOTES.md.
 
 local R = require("rules")
@@ -10,10 +11,15 @@ local D = require("detect")
 local YP = require("yellowpass")
 local ST = require("stewards")
 local AI = require("ai")
-local HUD = require("hud")
+local HUD_P = require("hud_practice")
+local HUD_R = require("hud_race")
+local SET = require("settings")
+local AP = require("autoposts")
+local GP = require("gaps")
 local P = require("points")
 
-local VERSION = "0.1.2"
+local VERSION = "0.2.0"
+SET.load()
 local sim = ac.getSim()
 local G = nil
 
@@ -68,16 +74,36 @@ local function say(text, toPlayer, illegal)
   G.log[#G.log + 1] = "[" .. fmtTime(sim.currentSessionTime) .. "] " .. text
   ac.log("BRSCC RC: " .. text)
   if toPlayer then ac.setMessage("Race Control", text, illegal and "illegal" or nil, 7) end
+  G.ticker = { text = text, t = sim.time / 1000, col = illegal and rgbm(1, 0.29, 0.29, 1) or nil }
+end
+
+-- Marshal posts: a recorded map (map builder) wins; otherwise generated from the track geometry
+-- (autoposts.lua: a post before each corner, gaps <= 350 m, names from sections.ini); "even" =
+-- 12 evenly spaced (fallback / setting). Returns map, track id, description.
+local function autoMap()
+  if not (ac.hasTrackSpline and ac.hasTrackSpline()) then return nil end
+  local ok, map = pcall(function()
+    local sections = nil
+    pcall(function() sections = AP.sectionsFromIni(ac.INIConfig.trackData("sections.ini")) end)
+    local function pos(t) local v = ac.trackProgressToWorldCoordinate(t); return v.x, v.z end
+    return (AP.build(pos, sim.trackLengthM, { sections = sections }))
+  end)
+  if ok and map and #map >= 3 then return map end
 end
 
 local function loadMap()
   local id = ac.getTrackFullID("_")
-  local path = ac.getFolder(ac.FolderID.ScriptOrigin) .. "/data/tracks/" .. id .. ".json"
-  if io.fileExists(path) then
-    local ok, data = pcall(JSON.parse, io.load(path))
-    if ok and type(data) == "table" and data.sectors then return S.normalise(data.sectors), id, true end
+  local src = SET.get("postsSource")
+  if src ~= "even" then
+    local path = ac.getFolder(ac.FolderID.ScriptOrigin) .. "/data/tracks/" .. id .. ".json"
+    if io.fileExists(path) then
+      local ok, data = pcall(JSON.parse, io.load(path))
+      if ok and type(data) == "table" and data.sectors then return S.normalise(data.sectors), id, "recorded map" end
+    end
+    local m = autoMap()
+    if m then return m, id, "automatic from track geometry" end
   end
-  return S.even(), id, false
+  return S.even(), id, "evenly spaced"
 end
 
 -- session lifecycle ---------------------------------------------------------------
@@ -86,14 +112,15 @@ local function init()
     AI.releaseAll()
     physics.overrideRacingFlag(ac.FlagType.None)
   end
-  local map, trackId, fromFile = loadMap()
+  local map, trackId, mapSource = loadMap()
   G = {
     kind = sessionKind(), map = map, trackId = trackId,
     flags = F.new(map), det = D.new(), yp = YP.new(),
     drivers = {}, prev = {}, black = {}, bwUntil = {}, tlLaps = {}, doubleLap = {}, exc = {},
     excursions = { "t_s,car,ai,spline,duration_s,max_wheels_outside,max_wheels_beyond,surfaces_fl_fr_rl_rr,counted" },
     laps = {}, finished = {}, contacts = {},
-    messages = {}, log = {}, lastFlag = nil, reportWritten = false,
+    messages = {}, log = {}, lastFlag = nil, reportWritten = false, mapSource = mapSource,
+    gaps = GP.new(), lineT = nil,
     trace = { "t_s,car,ai,spline,lap,kmh,ai_cap_kmh,flag_level,hazard,wheels_out,in_pit,in_box,req_pit,fuel_l,fuel_per_lap,engine_life,gearbox_dmg" }, traceT = 0,
   }
   for i = 0, sim.carsCount - 1 do
@@ -103,7 +130,7 @@ local function init()
   if G.kind then
     say(("Briefing (%s): pit limit %d km/h. Yellow = slow, no overtaking until the green. " ..
       "Track limits per NCR App.7 1.11. Marshal posts: %s.")
-      :format(G.kind, R.pitLimitKmh, fromFile and (#map .. " from track file") or (#map .. " evenly spaced")), true)
+      :format(G.kind, R.pitLimitKmh, #map .. " " .. mapSource), true)
   end
 end
 
@@ -268,6 +295,8 @@ function script.rcUpdate(dt)
   local snap = {}
   for _, car in ac.iterateCars() do
     local i = car.index
+    GP.update(G.gaps, i, car.lapCount, car.splinePosition, sim.currentSessionTime / 1000)
+    if i == 0 and G.prev[0] and car.lapCount > G.prev[0].lap then G.lineT = sim.time / 1000 end
     local beyond, codes = wheelsBeyond(car)
     snap[i] = { spline = car.splinePosition, speed = car.speedKmh, wheelsOut = car.wheelsOutside,
       inPit = car.isInPitlane, retired = car.isRetired, lap = car.lapCount, beyond = beyond, codes = codes }
@@ -290,6 +319,7 @@ function script.rcUpdate(dt)
 
   -- 2. hazards -> sector flags
   local hazards, fresh = D.hazards(G.det, snap, dt)
+  G.hazards = hazards
   local changed = F.update(G.flags, hazards, dt)
   for _, id in ipairs(fresh) do
     local h = snap[id]
@@ -451,77 +481,269 @@ function script.rcUpdate(dt)
   end
 end
 
--- HUD -----------------------------------------------------------------------------------
-function script.rcHud(dt)
-  if not G or not G.kind or sim.isOnlineRace then return end
-  local me = ac.getCar(0)
-  if not me then return end
-  local lvl, k = F.levelFor(G.flags, me.splinePosition, sim.trackLengthM)
-  if G.playerLevel ~= nil then lvl = G.playerLevel end
-  local d = G.drivers[0]
-  local carFlag = nil
-  if G.black[0] then carFlag = "black"
-  elseif d and #d.pending > 0 then carFlag = "drive_through"
-  elseif G.bwUntil[0] and sim.currentSessionTime < G.bwUntil[0] then carFlag = "black_white" end
-  HUD.draw({
-    level = lvl, green = (G.playerGreen and lvl == 0) or false, postName = G.map[k].name, carFlag = carFlag,
-    carNumber = "", trackLimits = d and d.trackLimits or 0, timePenaltyS = d and d.timePenaltyS or 0,
-    pending = d and #d.pending or 0, messages = G.messages,
-  })
+-- HUD view model -------------------------------------------------------------------------
+-- One view table feeds both renderers (hud_practice.lua / hud_race.lua), so race mode can be
+-- finished later without touching the race-control logic.
+local function short(i)
+  local n = name(i)
+  return n:match("(%S+)$") or n
 end
 
--- Window: marshal posts + stewards' ledger ---------------------------------------------------
+local function lapTime(ms) if not ms or ms <= 0 then return nil end return fmtLap(ms) end
+
+local function trackLimitsText(d, car)
+  local n = d.trackLimits
+  if G.kind == "qualifying" then
+    local del = 0
+    for _ in pairs(d.deletedLaps) do del = del + 1 end
+    return ("%d lap%s deleted"):format(del, del == 1 and "" or "s"), false
+  end
+  if G.kind ~= "race" then return n > 0 and (n .. " noted (practice)") or "clean", false end
+  if n == 0 then return "clean · next breach: noted", false end
+  local nx = R.trackLimitsLadder[n + 1]
+  if not nx then return "6 of 6 · disqualified", true end
+  local what = ({ none = "noted", warning = "warning (black/white)", time = nx.seconds and ("+" .. nx.seconds .. " s"),
+    drive_through = "DRIVE-THROUGH", black = "BLACK FLAG" })[nx.action] or nx.action
+  local held = d.tlHoldUntilLap and car.lapCount < d.tlHoldUntilLap
+  return ("%d of 6 · next: %s%s"):format(n, what, held and " (after the line)" or ""),
+    nx.action == "drive_through" or nx.action == "black"
+end
+
+local function buildView()
+  local me = ac.getCar(0)
+  local L = sim.trackLengthM
+  local d = G.drivers[0]
+  local now = sim.time / 1000
+  local s = SET.get("hudScale")
+  local v = { scale = s, W = sim.windowWidth / sim.uiScale, H = sim.windowHeight / sim.uiScale }
+
+  -- course flag at the player's position (same logic the AI obeys)
+  local lvl, k = F.levelFor(G.flags, me.splinePosition, L)
+  if G.playerLevel ~= nil then lvl = G.playerLevel end
+  local post = G.map[k].name
+  local hazAhead = nil
+  for _, h in ipairs(G.hazards or {}) do
+    local dist = S.ahead(me.splinePosition, h.spline, L)
+    if h.id ~= 0 and dist < 800 and (not hazAhead or dist < hazAhead) then hazAhead = dist end
+  end
+  local where = post .. (hazAhead and (" · incident %d m ahead"):format(math.floor(hazAhead / 10 + 0.5) * 10) or "")
+  local course = nil
+  if lvl == 2 then
+    course = { lamps = { "yellow", "yellow" }, title = "DOUBLE YELLOW", line1 = "Slow · be ready to stop · NO OVERTAKING", line2 = where }
+  elseif lvl == 1 then
+    course = { lamps = { "yellow" }, title = "YELLOW", line1 = "Slow down · NO OVERTAKING", line2 = where }
+  elseif G.playerGreen then
+    course = { lamps = { "green" }, title = "GREEN", line1 = "Track clear · racing resumes", line2 = post }
+  end
+
+  -- personal boards (black flag > drive-through > black/white)
+  local num = "1"   -- TODO: real race number from the skin's ui_skin.json
+  local personal = nil
+  local pend = d and d.pending[1]
+  if G.black[0] then
+    personal = { lamps = { "black" }, number = num, title = "BLACK FLAG", line1 = "Pit this lap · report to the Clerk of the Course", line2 = "Disqualified" }
+  elseif pend then
+    local left = math.max(0, R.serveWithinLaps - (me.lapCount - pend.notifiedLap))
+    personal = { lamps = { "number" }, number = num, title = pend.kind == "stop_go" and "STOP-GO" or "DRIVE-THROUGH",
+      line1 = ("Enter the pit lane within %d lap%s · %d km/h"):format(left, left == 1 and "" or "s", R.pitLimitKmh),
+      line2 = "NCR Ch.12 App.10" }
+  elseif G.bwUntil[0] and sim.currentSessionTime < G.bwUntil[0] then
+    personal = { lamps = { "bw" }, number = num, title = "BLACK / WHITE", line1 = "Track limits warning", line2 = "next breach: +5 s" }
+  end
+  v.flag = course or personal          -- course flags are safety-critical: they take the big panel
+
+  -- track strip
+  local segs = {}
+  for i = 1, #G.map do segs[i] = { level = G.flags.level[i], green = G.flags.green[i] == 1 } end
+  local cars = {}
+  for _, c in ac.iterateCars() do
+    if c.index ~= 0 and not c.isInPitlane then cars[#cars + 1] = { s = c.splinePosition, hazard = D.isHazard(G.det, c.index) } end
+  end
+  v.strip = { posts = G.map, segs = segs, cars = cars, me = me.splinePosition, postName = post }
+
+  -- race control line (latest message, 8 s)
+  if G.ticker and now - (G.ticker.t or 0) < 8 then v.ticker = { text = G.ticker.text, col = G.ticker.col } end
+
+  -- race info
+  local sess = ac.getSession(sim.currentSessionIndex)
+  local r = { total = sim.carsCount }
+  local timed = not sess or sess.isTimedRace or G.kind ~= "race"
+  if G.kind == "race" then
+    r.pos = me.racePosition
+    r.leader = me.racePosition == 1
+    if not timed and sess.laps > 0 then
+      r.lapText = ("LAP %d / %d"):format(math.min(me.lapCount + 1, sess.laps), sess.laps)
+      local togo = sess.laps - me.lapCount
+      r.subText = togo <= 1 and "Final lap" or (togo .. " laps to go")
+    else
+      r.lapText = ("LAP %d"):format(me.lapCount + 1)
+      r.subText = fmtTime(sim.sessionTimeLeft) .. " left"
+    end
+    -- interval timing to the cars either side in the race order
+    for _, c in ac.iterateCars() do
+      if c.racePosition == me.racePosition - 1 then
+        local g, down = GP.interval(G.gaps, c.index, 0)
+        r.aheadName, r.ahead = short(c.index), (g and { value = g }) or (down and { lapsDown = down }) or nil
+      elseif c.racePosition == me.racePosition + 1 then
+        local g, down = GP.interval(G.gaps, 0, c.index)
+        r.behindName, r.behind = short(c.index), (g and { value = g }) or (down and { lapsDown = down }) or nil
+      end
+    end
+  else
+    r.pos = (me.racePosition or 0) > 0 and me.racePosition or nil
+    r.lapText = ("LAP %d"):format(me.lapCount + 1)
+    r.subText = (G.kind == "qualifying" and "Qualifying · " or "Practice · ") .. fmtTime(sim.sessionTimeLeft) .. " left"
+    -- physical neighbours on track (time ~ distance / my speed)
+    local spd = math.max(me.speedKmh / 3.6, 10)
+    local bestA, bestB
+    for _, c in ac.iterateCars() do
+      if c.index ~= 0 and not c.isInPitlane then
+        local da = S.ahead(me.splinePosition, c.splinePosition, L)
+        local db = S.ahead(c.splinePosition, me.splinePosition, L)
+        if da < L / 2 and (not bestA or da < bestA[1]) then bestA = { da, c.index } end
+        if db < L / 2 and (not bestB or db < bestB[1]) then bestB = { db, c.index } end
+      end
+    end
+    if bestA then r.aheadName, r.ahead = short(bestA[2]), { value = bestA[1] / spd } end
+    if bestB then r.behindName, r.behind = short(bestB[2]), { value = bestB[1] / spd } end
+  end
+  r.last, r.best = lapTime(me.previousLapTimeMs), lapTime(me.bestLapTimeMs)
+  v.race = r
+
+  -- driver's record
+  local tlText, severe = trackLimitsText(d, me)
+  v.record = { tl = d.trackLimits, tlText = tlText, tlSevere = severe, timePen = d.timePenaltyS, dsq = d.dsq or G.black[0] }
+  if pend then v.record.dtLapsLeft = math.max(0, R.serveWithinLaps - (me.lapCount - pend.notifiedLap)) end
+
+  -- race mode extras: flag only at the post, boards at the line, pit board once a lap
+  v.postFlag = course
+  local sinceLine = G.lineT and (now - G.lineT) or 1e9
+  if personal and sinceLine < 8 then v.lineBoard = personal end
+  if G.kind == "race" and sinceLine < 8 then
+    v.pitBoard = { l1 = "P" .. (r.pos or "-"),
+      l2 = (r.ahead and r.ahead.value and ("%+.1f"):format(-r.ahead.value))
+        or (r.behind and r.behind.value and ("%+.1f"):format(r.behind.value)) or nil,
+      l3 = (not timed and sess.laps > 0) and ("L%d"):format(math.max(0, sess.laps - me.lapCount)) or nil }
+  end
+  return v
+end
+
+function script.rcHud(dt)
+  if not G or not G.kind or sim.isOnlineRace then return end
+  if not ac.getCar(0) then return end
+  local ok, err = pcall(function()
+    local v = buildView()
+    if SET.get("hudMode") == "race" then HUD_R.draw(v) else HUD_P.draw(v) end
+  end)
+  if not ok then
+    G.hudErr = tostring(err)
+    if not G.hudErrLogged then G.hudErrLogged = true; ac.log("BRSCC RC HUD error: " .. G.hudErr) end
+  end
+end
+
+-- Settings window ---------------------------------------------------------------------------
+local function radio(label, key, value)
+  if ui.radioButton(label, SET.get(key) == value) then SET.set(key, value) end
+end
+local function slider(label, key, min, max, fmt, int)
+  local v, changed = ui.slider(label, SET.get(key), min, max, fmt, int)
+  if changed then SET.set(key, v) end
+end
+local function check(label, key)
+  if ui.checkbox(label, SET.get(key)) then SET.set(key, not SET.get(key)) end
+end
+
+function script.rcSettings(dt)
+  if sim.isOnlineRace then ui.text("BRSCC Race Control is offline-only."); return end
+  ui.text(("BRSCC Race Control v%s"):format(VERSION))
+  if G and G.hudErr then ui.textColored("HUD error: " .. G.hudErr, rgbm(1, 0.3, 0.3, 1)) end
+  ui.tabBar("rcTabs", nil, function()
+    ui.tabItem("Display", nil, function()
+      ui.header("HUD mode")
+      radio("Practice: full information (positions, gaps, track overview)", "hudMode", "practice")
+      radio("Race: realistic (flags at the post, boards at the line, pit board) [basic]", "hudMode", "race")
+      ui.header("Size")
+      slider("HUD scale", "hudScale", 0.6, 1.5, "%.2f")
+    end)
+    ui.tabItem("Rules", nil, function()
+      ui.header("Track limits (NCR Ch.12 App.7 1.6 / 1.11)")
+      slider("Wheels beyond the kerb for a breach", "trackLimitWheels", 1, 4, "%.0f", true)
+      ui.textWrapped("NCR: any part of any tyre beyond the kerb's outer edge = 1. Kerbs never count.")
+      slider("Minimum excursion (s)", "trackLimitMinS", 0.1, 1.0, "%.2f")
+      ui.header("Fixed by the regulations (not adjustable)")
+      ui.textWrapped(("Pit limit %d km/h · drive-through within %d laps · track-limits ladder: noted, " ..
+        "warning, +5 s, +10 s, drive-through, black flag · lights out 2-7 s after red."):format(R.pitLimitKmh, R.serveWithinLaps))
+    end)
+    ui.tabItem("AI", nil, function()
+      check("Pit guard: in races AI pit only when race control sends them", "aiPitGuard")
+      ui.header("Yellow-flag behaviour")
+      slider("Single yellow: share of entry speed", "aiSingleFactor", 0.6, 1.0, "%.2f")
+      slider("Double yellow: max km/h", "aiDoubleMaxKmh", 50, 140, "%.0f")
+    end)
+    ui.tabItem("Marshal posts", nil, function()
+      if not G then ui.text("Waiting for session..."); return end
+      ui.text(("%s: %d posts (%s)"):format(G.trackId, #G.map, G.mapSource or "?"))
+      radio("Automatic (recorded map if there is one, else from track geometry)", "postsSource", "auto")
+      radio("Evenly spaced (12)", "postsSource", "even")
+      if ui.button("Rebuild posts now") then
+        local map, _, src = loadMap()
+        G.map, G.mapSource, G.flags = map, src, F.new(map)
+        say(("Marshal posts rebuilt: %d (%s)"):format(#map, src))
+      end
+      ui.header("Record the real posts (overrides automatic)")
+      G.edit = G.edit or { posts = {}, name = "" }
+      local me = ac.getCar(0)
+      if me then
+        local newName = ui.inputText("Post name (e.g. Post 3 / Copse)", G.edit.name)
+        if newName then G.edit.name = newName end
+        if ui.button("Mark post at my car") then
+          local nm = (G.edit.name ~= "" and G.edit.name) or ("Post " .. (#G.edit.posts + 1))
+          G.edit.posts[#G.edit.posts + 1] = { from = math.floor(me.splinePosition * 10000) / 10000, name = nm }
+          G.edit.name = ""
+        end
+        ui.sameLine()
+        if ui.button("Undo") then table.remove(G.edit.posts) end
+        ui.sameLine()
+        if ui.button("Save map") and #G.edit.posts >= 3 then
+          local dir = ac.getFolder(ac.FolderID.ScriptOrigin) .. "/data/tracks"
+          io.createDir(dir)
+          io.save(dir .. "/" .. G.trackId .. ".json", JSON.stringify({ track = G.trackId, sectors = G.edit.posts }))
+          G.map, G.mapSource = S.normalise(G.edit.posts), "recorded map"
+          G.flags = F.new(G.map)
+          say(("Marshal map saved: %d posts for %s"):format(#G.map, G.trackId), true)
+        end
+        ui.text(("%d marked · you are at %.4f (need 3+)"):format(#G.edit.posts, me.splinePosition))
+      end
+      ui.header("Current posts")
+      for k, sct in ipairs(G.map) do
+        local l = G.flags.level[k]
+        local txt = ("%2d  %5.0f m  %s  %s"):format(k, sct.from * sim.trackLengthM, sct.name,
+          l == 2 and "DOUBLE YELLOW" or l == 1 and "YELLOW" or "")
+        if l > 0 then ui.textColored(txt, rgbm(1, 0.85, 0, 1)) else ui.text(txt) end
+      end
+    end)
+  end)
+end
+
+-- Race Control window: stewards' ledger + log ----------------------------------------------------
 function script.rcWindow(dt)
   if sim.isOnlineRace then ui.text("BRSCC Race Control is offline-only."); return end
   if not G then ui.text("Waiting for session..."); return end
-  ui.text(("BRSCC Race Control v%s  |  %s  |  %s"):format(VERSION, G.trackId, G.kind or "unsupported session"))
+  ui.text(("%s  |  %s  |  posts: %d (%s)"):format(G.trackId, G.kind or "unsupported session", #G.map, G.mapSource or "?"))
   if ui.button("Write report now") then writeReport(true) end
-  ui.text(" ")
-
-  -- Marshal map builder: drive a slow lap, press the button level with each real marshal post.
-  G.edit = G.edit or { posts = {}, name = "" }
-  ui.text("MARSHAL MAP BUILDER  (drive a slow lap; mark each post as you pass it)")
-  local me = ac.getCar(0)
-  if me then
-    local newName = ui.inputText("Post name (e.g. Post 3 / Copse)", G.edit.name)
-    if newName then G.edit.name = newName end
-    if ui.button("Mark post at my car") then
-      local nm = (G.edit.name ~= "" and G.edit.name) or ("Post " .. (#G.edit.posts + 1))
-      G.edit.posts[#G.edit.posts + 1] = { from = math.floor(me.splinePosition * 10000) / 10000, name = nm }
-      G.edit.name = ""
-    end
-    ui.sameLine()
-    if ui.button("Undo") then table.remove(G.edit.posts) end
-    ui.sameLine()
-    if ui.button("Save map") and #G.edit.posts >= 3 then
-      local dir = ac.getFolder(ac.FolderID.ScriptOrigin) .. "/data/tracks"
-      io.createDir(dir)
-      io.save(dir .. "/" .. G.trackId .. ".json", JSON.stringify({ track = G.trackId, sectors = G.edit.posts }))
-      G.map = S.normalise(G.edit.posts)
-      G.flags = F.new(G.map)
-      say(("Marshal map saved: %d posts for %s"):format(#G.map, G.trackId), true)
-    end
-    ui.text(("  %d marked, you are at spline %.4f (need 3+ to save)"):format(#G.edit.posts, me.splinePosition))
-  end
-  ui.text(" ")
-  ui.text("MARSHAL POSTS")
-  for k, sct in ipairs(G.map) do
-    local l = G.flags.level[k]
-    local txt = ("  %2d  %-22s %s"):format(k, sct.name, l == 2 and "DOUBLE YELLOW" or l == 1 and "YELLOW" or "-")
-    if l > 0 then ui.textColored(txt, rgbm(1, 0.85, 0, 1)) else ui.text(txt) end
-  end
-  ui.text(" ")
-  ui.text("STEWARDS")
+  ui.header("Stewards")
+  local any = false
   for i = 0, sim.carsCount - 1 do
     local d = G.drivers[i]
     if d and (d.trackLimits > 0 or d.timePenaltyS > 0 or d.penaltyPoints > 0 or d.dsq or #d.pending > 0) then
-      ui.text(("  %-24s TL %d  +%ds  PP %d%s%s"):format(name(i), d.trackLimits, d.timePenaltyS, d.penaltyPoints,
+      any = true
+      ui.text(("%-24s TL %d  +%ds  PP %d%s%s"):format(name(i), d.trackLimits, d.timePenaltyS, d.penaltyPoints,
         #d.pending > 0 and "  DT pending" or "", d.dsq and "  DSQ" or ""))
     end
   end
-  ui.text(" ")
-  ui.text("LOG")
-  for n = #G.log, math.max(1, #G.log - 25), -1 do ui.text("  " .. G.log[n]) end
+  if not any then ui.text("No decisions yet.") end
+  ui.header("Log")
+  for n = #G.log, math.max(1, #G.log - 40), -1 do ui.text(G.log[n]) end
 end
 
 -- events --------------------------------------------------------------------------------------

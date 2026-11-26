@@ -8,7 +8,7 @@ A Lua app for Assetto Corsa (Custom Shaders Patch) that runs offline races as re
 
 Every rule is traced to the **2026 BRSCC Mazda MX-5 Championship Sporting & Technical Regulations** and the **Motorsport UK National Competition Rules (NCR) 2026**.
 
-> Status: **v0.1.2, early development.** Tested in-game at Silverstone International.
+> Status: **v0.2.0, early development.** v0.1.x was tested in-game at Silverstone International; v0.2.0 (new HUD, settings, automatic marshal posts) is awaiting its first in-game test.
 > See [Roadmap](#roadmap).
 
 ## Requirements
@@ -19,8 +19,10 @@ Every rule is traced to the **2026 BRSCC Mazda MX-5 Championship Sporting & Tech
 ## Install
 1. Download the install zip from **Releases**, or build it with `scripts/package.sh`.
 2. Unzip it into your Assetto Corsa root folder (the one containing `acs.exe`), so that you end up with `apps/lua/brscc_race_control/manifest.ini`.
-3. Start any offline Practice, Qualifying or Race session. The app loads automatically.
-   - Its window (marshal posts, stewards' ledger, log, marshal-map builder) is in the in-game apps bar.
+3. Start any offline Practice, Qualifying or Race session. The app loads automatically and draws its HUD.
+4. Two windows are in the in-game apps bar:
+   - **BRSCC Race Control - Settings:** HUD mode, HUD scale, track-limits sensitivity, AI options, and the marshal posts (automatic, recorded or evenly spaced) with the map builder.
+   - **BRSCC Race Control:** the stewards' ledger, the race-control log and "Write report now".
 
 Reports are written to `Documents/Assetto Corsa/brscc-race-control/reports/`. Each session produces four files:
 - `.txt`: provisional results and the race-control log;
@@ -31,7 +33,8 @@ Reports are written to `Documents/Assetto Corsa/brscc-race-control/reports/`. Ea
 ## What it does (v0.1.2)
 | Area | Behaviour | Source |
 |---|---|---|
-| Marshal posts | 12 evenly spaced, or record the real posts with the in-app map builder | NCR Ch.12 App.8 1.8 |
+| HUD | **Practice mode** (full information, approved mock-ups): flag panel, track strip of marshal posts, race-control line, position, lap, gaps, last/best, track-limits pips, penalty chips. **Race mode** (realistic, basic): flag only at the post, boards at the line, pit board once a lap | `docs/mockups/` |
+| Marshal posts | **Automatic** from track geometry: a post before every corner, gaps of at most 350 m, corner names from `sections.ini`. A recorded map (in-app builder) overrides it; evenly spaced as a fallback | NCR Ch.12 App.8 1.8 |
 | Yellow flags | A stopped car on track brings a double yellow, plus a single yellow at the post before; a car off track brings a single yellow; green after the incident | App.8 1.7 e/f, 1.8 |
 | AI under yellow | Slows down, crawls past the hazard, no overtaking, back to racing once past | App.8 1.7, 1.10 |
 | Overtaking under yellow | Race: give the place back or take 10 s. Qualifying: lap deleted. Practice: reprimand | App.8 1.10 |
@@ -52,11 +55,17 @@ src/brscc_race_control/   the app (copy into <AC>/apps/lua/)
   sectors.lua, flags.lua  marshal posts and flag states       (pure logic)
   detect.lua              hazard and track-limit detection    (pure logic)
   yellowpass.lua          overtaking under yellow, give-back  (pure logic)
+  autoposts.lua           marshal posts from track geometry   (pure logic)
+  gaps.lua                interval timing (checkpoints)       (pure logic)
+  settings.lua            persistent user settings (ac.storage)
   ai.lua                  AI compliance and pit guard         (CSP API)
-  hud.lua                 on-screen overlay                   (CSP API)
+  hud_common.lua          drawing helpers, flag panel         (CSP API)
+  hud_practice.lua        full-information HUD                (CSP API)
+  hud_race.lua            realistic HUD (basic)               (CSP API)
   brscc_race_control.lua  main script: ties it together       (CSP API)
 tests/run.lua             unit tests for the pure-logic modules
-tests/sim.lua             end-to-end: runs the real app against a fake CSP API
+tests/sim.lua             end-to-end: runs the real app against a fake CSP API. With
+                          HUD_SNAPSHOTS=<dir>, it also writes what the HUD draws as SVGs
 docs/                     regulation research, API notes, test plans, HUD mock-ups
 scripts/package.sh        builds the install zip into dist/
 ```
@@ -80,7 +89,7 @@ CI runs both test suites on every push.
 - The rules logic is kept pure (no CSP calls) so it can be unit-tested.
 
 ## Roadmap
-1. **HUD v2**, from the approved mock-ups (`docs/mockups/`): a Race mode (realistic: flags at the posts, boards at the line) and a Practice mode (full information).
+1. ~~HUD v2 and the settings window~~ (v0.2.0). Still to do: finish Race mode (light panels, the start-line board sequence, pit-board styles) and read real race numbers from the car skins.
 2. **Meeting flow:** qualifying, then races 1–3. Grids are set by the app (race 2 from the race 1 result, race 3 from race 2).
 3. **Race procedures:**
    - standing start with jump-start detection;

@@ -77,3 +77,23 @@
 - `windowWidth`, `windowHeight`, `uiScale`
 
 **`ac.StateSession`:** `type`, `laps`, `durationMinutes`, `isTimedRace`, `hasAdditionalLap`, `leaderCompletedLaps`, `isOver`.
+
+## Added in v0.2.0 (verified against the same definitions)
+- `ac.hasTrackSpline()`, `ac.trackProgressToWorldCoordinate(t, linear?) -> vec3`: the AI line in world space; used for automatic marshal posts.
+- `ac.INIConfig.trackData("sections.ini")`: `.sections[name][key] = { values }`. AC sections use `IN`, `OUT` and `TEXT`.
+- `ac.storage(defaultsTable, keyPrefix)`: a table that persists on write, saved under `Documents/Assetto Corsa/cfg/extension/state/lua`.
+- **UI:**
+  - `ui.tabBar(id, flags, fn)` / `ui.tabItem(label, flags, fn)`
+  - `ui.radioButton(label, checked) -> clicked`
+  - `ui.checkbox(label, checked) -> clicked`
+  - `ui.slider(label, value, min, max, fmt, power|true=int) -> value, changed`
+  - `ui.header`, `ui.textWrapped`
+- **Drawing:**
+  - `ui.drawRectFilled(p1, p2, col, rounding)`
+  - `ui.drawRect(p1, p2, col, rounding, flags, thickness)`
+  - `ui.drawTriangleFilled(p1, p2, p3, col)`
+  - `ui.drawCircleFilled(p, r, col, segments)`
+  - `ui.pushDWriteFont('Segoe UI;Weight=Bold')` (the form CSP's own scripts use)
+  - `ui.measureDWriteText(text, size) -> vec2`
+  - `ui.dwriteDrawText(text, size, pos, col)`
+- `ac.StateSim.time` (ms since AC start): used for HUD timers, not `os.clock` (which is CPU time).

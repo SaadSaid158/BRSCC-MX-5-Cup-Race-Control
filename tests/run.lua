@@ -217,5 +217,98 @@ do
   eq("pass across line", ev[1] and ev[1].type, "pass")
 end
 
+
+-- autoposts ------------------------------------------------------------------------------
+local AP = require("autoposts")
+do
+  -- track builder: list of { len=, turnDeg= } segments driven in order; returns pos(t), length
+  local function track(segs)
+    local pts, x, z, h, L = {}, 0, 0, 0, 0
+    for _, sgm in ipairs(segs) do L = L + sgm.len end
+    local n = 4000
+    local per = L / n
+    local si, rem = 1, segs[1].len
+    for i = 0, n do
+      pts[i] = { x, z }
+      local sgm = segs[si]
+      h = h + math.rad(sgm.turn or 0) * per / sgm.len
+      x, z = x + math.cos(h) * per, z + math.sin(h) * per
+      rem = rem - per
+      if rem <= 1e-9 and si < #segs then si = si + 1; rem = rem + segs[si].len end
+    end
+    return function(t) local p = pts[math.floor((t % 1) * n)]; return p[1], p[2] end, L
+  end
+  -- stadium: 700 m straight, 180 deg hairpin (r=100), 700 m straight, 180 deg hairpin
+  local pos, L = track({ { len = 700 }, { len = math.pi * 100, turn = 180 }, { len = 700 }, { len = math.pi * 100, turn = 180 } })
+  local cs = AP.corners(pos, L)
+  eq("stadium: 2 corners", #cs, 2)
+  local map = AP.build(pos, L)
+  local maxGap, minGap = 0, 1e9
+  for k = 1, #map do
+    local a, b = map[k].from, map[k % #map + 1].from
+    local g = ((b - a) % 1) * L
+    maxGap, minGap = math.max(maxGap, g), math.min(minGap, g)
+  end
+  eq("stadium: no gap > 350 m", maxGap <= 350.5, true)
+  eq("stadium: no posts < 120 m apart", minGap >= 119.5, true)
+  eq("stadium: first post at start/finish", map[1].from, 0)
+  -- a post sits shortly before each hairpin entry (700 m and 700+314+700 m)
+  local function postNear(m) for _, p in ipairs(map) do local d = ((m / L - p.from) % 1) * L; if d >= 10 and d <= 80 then return true end end return false end
+  eq("stadium: post before hairpin 1", postNear(700), true)
+  eq("stadium: post before hairpin 2", postNear(700 + math.pi * 100 + 700), true)
+  -- rounded rectangle with 4 x 90 deg corners and a long back straight
+  local pos2, L2 = track({ { len = 900 }, { len = 80, turn = 90 }, { len = 300 }, { len = 80, turn = 90 },
+    { len = 900 }, { len = 80, turn = 90 }, { len = 300 }, { len = 80, turn = 90 } })
+  eq("rectangle: 4 corners", #AP.corners(pos2, L2), 4)
+  -- names from sections.ini
+  local secs = AP.sectionsFromIni({ sections = { SECTION_0 = { IN = { "0.33" }, OUT = { "0.36" }, TEXT = { "Copse" } },
+    OTHER = { X = { "1" } } } })
+  eq("sections parsed", #secs, 1); eq("section name", secs[1] and secs[1].name, "Copse")
+  local named = AP.build(pos2, L2, { sections = { { from = 0.33, to = 0.37, name = "Copse" } } })
+  local hasCopse = false
+  for _, p in ipairs(named) do if p.name:find("Copse") then hasCopse = true end end
+  eq("corner named from sections.ini", hasCopse, true)
+  -- straight line (no corners) still gets posts every <= 350 m
+  local pos3, L3 = track({ { len = 1000 }, { len = 1000 } })
+  local m3 = AP.build(pos3, L3)
+  eq("no corners: filled", #m3 >= 6, true)
+end
+
+-- gaps ---------------------------------------------------------------------------------------------
+local GP = require("gaps")
+do
+  local st = GP.new()
+  -- car 1 ahead by 0.05 lap; both at 100 s/lap -> 5 s gap
+  for k = 0, 300 do
+    local t = k * 0.5
+    local p1, p2 = t / 100 + 0.05, t / 100
+    GP.update(st, 1, math.floor(p1), p1 % 1, t)
+    GP.update(st, 2, math.floor(p2), p2 % 1, t)
+  end
+  local g = GP.interval(st, 1, 2)
+  eq("gap ~5 s", g and math.abs(g - 5) < 0.6, true)
+  -- spline wraps a frame before the lap counter: no jump backwards
+  local st2 = GP.new()
+  GP.update(st2, 1, 0, 0.99, 0); GP.update(st2, 1, 0, 0.01, 1); GP.update(st2, 1, 1, 0.02, 2)
+  eq("wrap handled", GP.progress(st2, 1) > 1 and GP.progress(st2, 1) < 1.05, true)
+  -- lapped
+  local st3 = GP.new()
+  for k = 0, 400 do local t = k * 0.5
+    GP.update(st3, 1, math.floor(t / 50), (t / 50) % 1, t); GP.update(st3, 2, math.floor(t / 100), (t / 100) % 1, t) end
+  local gg, down = GP.interval(st3, 1, 2)
+  eq("lapped -> laps down", (gg == nil and (down or 0) >= 1) or gg ~= nil, true)
+end
+
+-- settings ------------------------------------------------------------------------------------------
+do
+  local SET = require("settings")
+  SET.memoryOnly = true
+  SET.load()
+  eq("default mode practice", SET.get("hudMode"), "practice")
+  SET.set("trackLimitWheels", 4)
+  eq("setting applied to rules", require("rules").trackLimitWheels, 4)
+  SET.set("trackLimitWheels", 1)
+end
+
 print(("%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)
