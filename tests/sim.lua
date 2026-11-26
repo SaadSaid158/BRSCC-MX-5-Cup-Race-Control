@@ -26,20 +26,19 @@ for i = 0, N - 1 do
     collidedWith = 0, collisionDepth = 0, baseKmh = 120, topCap = math.huge, parked = false, bestLapTimeMs = 59000 }
 end
 
--- OLD_CSP=1: behave like CSP 0.2.11, where the car/sim state is an FFI struct and reading a field
--- that version doesn't have THROWS (this is what broke v0.2.0 in-game: no AI track limits, empty trace).
+-- OLD_CSP=1: behave like CSP 0.2.11 (build 3465), where the car/sim state is an FFI struct and reading a
+-- field that version doesn't have THROWS (this is what broke v0.2.0 in-game: no AI track limits, empty trace).
+-- The list is the real one, checked against the 0.2.11 lua-sdk (docs/API_NOTES.md, "Verified on 0.2.11"):
+-- isRequestingPitStop is the only field we read that 0.2.11 lacks.
 local OLD = os.getenv("OLD_CSP") == "1"
-local OLD_MISSING = { isRequestingPitStop = true, fuelPerLap = true, maxFuel = true, fuel = true,
-  engineLifeLeft = true, gearboxDamage = true, bestLapTimeMs = true, time = true, windowWidth = true,
-  windowHeight = true, uiScale = true }
+local OLD_MISSING = { isRequestingPitStop = true }
 local function strict(t)
   return setmetatable(t, { __index = function(_, k)
     if OLD and OLD_MISSING[k] then error("'struct ac_car_state' has no member named '" .. k .. "'", 2) end
   end })
 end
 if OLD then
-  for i = 0, N - 1 do cars[i].bestLapTimeMs = nil; strict(cars[i]) end
-  sim.time = nil; sim.windowWidth = nil; sim.windowHeight = nil; sim.uiScale = nil
+  for i = 0, N - 1 do strict(cars[i]) end
   strict(sim)
 end
 
@@ -155,7 +154,7 @@ local function tick(n, f)
     if _G.afterHud then _G.afterHud() end
     script.rcWindow(dt)
     script.rcSettings(dt)
-    if not OLD then sim.time = t * 1000 end
+    sim.time = t * 1000
   end
 end
 local function lastTop(i)

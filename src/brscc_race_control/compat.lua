@@ -1,9 +1,10 @@
 -- compat.lua: CSP version differences and error containment.
 --
 -- CSP exposes car/sim state as FFI structs: reading a field that doesn't exist in the installed
--- CSP version THROWS instead of returning nil. v0.2.0 read newer fields (isRequestingPitStop,
--- fuelPerLap, ...) on CSP 0.2.11, which aborted the update loop at the first AI car every frame:
--- no AI track limits, no trace. Everything newer than the v0.1.0 field set goes through get().
+-- CSP version THROWS instead of returning nil. v0.2.0 read isRequestingPitStop, which CSP 0.2.11
+-- lacks (checked against its SDK, docs/API_NOTES.md), and that aborted the update loop at the first
+-- AI car every frame: no AI track limits, no trace. Fields newer than the v0.1.0 set go through
+-- get(), as insurance against older builds too.
 local M = { missing = {}, errors = {}, errorOrder = {} }
 
 -- Safe field read. Remembers missing fields so the pcall cost is paid once per field name.
