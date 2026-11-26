@@ -293,7 +293,16 @@ end
 
 -- main tick -----------------------------------------------------------------------------
 local update
-function script.rcUpdate(dt) CX.guard("update", update, dt) end
+-- Test driver: the game's AI drives the player car (physics.setCarAutopilot, user car only; it
+-- invalidates laps). Deliberately not saved in settings, so it can never be left on for a real race.
+-- The player car is still judged like every other car.
+local testDriver, testDriverApplied = false, false
+function script.rcUpdate(dt)
+  if testDriver ~= testDriverApplied then
+    if CX.guard("testDriver", physics.setCarAutopilot, testDriver, false) then testDriverApplied = testDriver end
+  end
+  CX.guard("update", update, dt)
+end
 update = function(dt)
   if sim.isOnlineRace or sim.isPaused or sim.isReplayActive then return end
   if G then G.clock = G.clock + dt end
@@ -306,7 +315,8 @@ update = function(dt)
   local snap = {}
   for _, car in ac.iterateCars() do
     local i = car.index
-    GP.update(G.gaps, i, car.lapCount, car.splinePosition, sim.currentSessionTime / 1000)
+    -- before the start AC holds currentSessionTime at -DBL_MAX: timing it poisons every gap
+    if running then GP.update(G.gaps, i, car.lapCount, car.splinePosition, sim.currentSessionTime / 1000) end
     if i == 0 and G.prev[0] and car.lapCount > G.prev[0].lap then G.lineT = G.clock end
     local beyond, codes = wheelsBeyond(car)
     snap[i] = { spline = car.splinePosition, speed = car.speedKmh, wheelsOut = car.wheelsOutside,
@@ -329,6 +339,7 @@ update = function(dt)
   end
 
   -- 2. hazards -> sector flags
+  if running and G.kind == "race" and not G.greenSeen then G.greenSeen = true; D.raceStarted(G.det, snap) end
   local hazards, fresh = D.hazards(G.det, snap, dt)
   G.hazards = hazards
   local changed = F.update(G.flags, hazards, dt)
@@ -463,7 +474,7 @@ update = function(dt)
 
   -- trace (2 Hz) for tuning: data/trace.csv next to the report
   G.traceT = G.traceT + dt
-  if G.traceT >= 0.5 and #G.trace < 200000 then
+  if running and G.traceT >= 0.5 and #G.trace < 200000 then
     G.traceT = 0
     for i, s in pairs(snap) do CX.guard("trace", function()
       local c = ac.getCar(i)
@@ -528,7 +539,9 @@ local function buildView()
   local d = G.drivers[0]
   local now = G.clock
   local s = SET.get("hudScale")
-  local ui_ = CX.get(sim, "uiScale", 1)
+  local ui_ = 1   -- uiScale lives on ac.StateUi (ac.getUI()), not on the sim state
+  pcall(function() ui_ = ac.getUI().uiScale or 1 end)
+  if not ui_ or ui_ <= 0 then ui_ = 1 end
   local v = { scale = s, W = CX.get(sim, "windowWidth", 1920) / ui_, H = CX.get(sim, "windowHeight", 1080) / ui_ }
 
   -- course flag at the player's position (same logic the AI obeys)
@@ -693,6 +706,12 @@ function script.rcSettings(dt)
       ui.header("Fixed by the regulations (not adjustable)")
       ui.textWrapped(("Pit limit %d km/h · drive-through within %d laps · track-limits ladder: noted, " ..
         "warning, +5 s, +10 s, drive-through, black flag · lights out 2-7 s after red."):format(R.pitLimitKmh, R.serveWithinLaps))
+    end)
+    ui.tabItem("Testing", nil, function()
+      if ui.checkbox("Test driver: the AI drives my car (laps invalid, resets when AC closes)", testDriver) then
+        testDriver = not testDriver
+      end
+      ui.textWrapped("For automated in-game testing. Race control still judges the car exactly as it judges you.")
     end)
     ui.tabItem("AI", nil, function()
       check("Pit guard: in races AI pit only when race control sends them", "aiPitGuard")

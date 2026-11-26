@@ -84,6 +84,8 @@ R.yellow = {
   stoppedKmh = 15,            -- slower than this ...
   stoppedForS = 1.5,          -- ... for this long = stopped car
   armedAboveKmh = 50,         -- a car only counts once it's done this speed (ignores grid / pit exit)
+  gridStallS = 5,             -- OURS: at a race start, a car still under stoppedKmh this long after the
+                              -- green is stalled on the grid and becomes a hazard (it never arms otherwise)
   offTrackWheels = 4,         -- all 4 wheels outside = car off track
   offTrackSlowKmh = 60,       -- off track and this slow = hazard (single yellow)
   clearAboveKmh = 40,         -- hazard clears once the car is back on track above this ...

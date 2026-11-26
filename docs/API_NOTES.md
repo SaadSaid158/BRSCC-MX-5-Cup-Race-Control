@@ -120,7 +120,8 @@
 - Present: `position`, `look`, `fuel`, `fuelPerLap` (physics-only; zero until AC has an estimate), `maxFuel`, `engineLifeLeft` (1000 when new), `gearboxDamage` (0 to 1), `bestLapTimeMs`, `isInPitlane`, `isInPit`.
 - Absent: **`isRequestingPitStop`**. We read it through `compat.get`, so the default `false` applies.
 - `ac.StateWheel`: `surfaceExtendedType`, `surfaceValidTrack` and `surfaceType` are all present.
-- `ac.StateSim`: `time` (**milliseconds** since AC started), `windowWidth`, `windowHeight` and `uiScale` are all present.
+- `ac.StateSim`: `time` (**milliseconds** since AC started), `windowWidth` and `windowHeight` are present. **`uiScale` is not on the sim**: it's on `ac.StateUi`, from `ac.getUI()`. v0.2.1 read `sim.uiScale`, which is always missing, so it fell back to 1.
+- **`sim.currentSessionTime` is `-DBL_MAX` before a race starts** (seen in-game, 2026-11-26). It only becomes the real session clock after the green. Anything stamped with it before then gets a time of −1.8e308. v0.2.1's gap timer did exactly that, and every gap showed the tail of DBL_MAX. Gate on `sim.isSessionStarted and sim.currentSessionTime > 0`.
 
 **Every CSP field the code reads** (`car.*`, `sim.*`, wheels, session; checked by script) is declared in the 0.2.11 SDK. The only exception is the guarded `isRequestingPitStop`. So the `OLD_CSP` list in `tests/sim.lua` is now just that one field. The other `compat.get` guards stay, as cheap insurance for even older builds.
 

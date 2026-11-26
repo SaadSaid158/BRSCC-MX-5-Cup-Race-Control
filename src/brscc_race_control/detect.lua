@@ -6,7 +6,17 @@ local M = {}
 
 function M.new() return { cars = {} } end
 
-local function car(st, id)
+local car
+-- Race start: every car on the grid gets a grid-stall clock. A car that gets away arms normally
+-- (armedAboveKmh); one still crawling after gridStallS is armed there, so a stalled car is a hazard.
+function M.raceStarted(st, cars)
+  for id, s in pairs(cars) do
+    local c = car(st, id)
+    if not s.inPit then c.gridT = 0 end
+  end
+end
+
+car = function(st, id)
   local c = st.cars[id]
   if not c then
     c = { armed = false, slowT = 0, okT = 0, hazard = 0, tlArmed = true, tlOkT = 0 }
@@ -22,6 +32,13 @@ function M.hazards(st, cars, dt)
   for id, s in pairs(cars) do
     local c = car(st, id)
     if s.speed > Y.armedAboveKmh and not s.inPit then c.armed = true end
+    if c.gridT and not c.armed then
+      if s.speed > Y.stoppedKmh or s.inPit then c.gridT = nil
+      else
+        c.gridT = c.gridT + dt
+        if c.gridT >= Y.gridStallS then c.armed, c.gridT = true, nil end
+      end
+    end
     local sev = 0
     if c.armed and not s.inPit and not s.retired then
       local off = s.wheelsOut >= Y.offTrackWheels

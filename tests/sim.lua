@@ -16,7 +16,7 @@ local sim = {
   isOnlineRace = false, isPaused = false, isReplayActive = false,
   raceSessionType = 3, currentSessionIndex = 0, isSessionStarted = true, isSessionFinished = false,
   currentSessionTime = 0, sessionTimeLeft = 0, carsCount = N, trackLengthM = L, time = 0,
-  windowWidth = 1920, windowHeight = 1080, uiScale = 1,
+  windowWidth = 1920, windowHeight = 1080,
 }
 local session = { type = 3, laps = 10, isTimedRace = false, leaderCompletedLaps = 0 }
 for i = 0, N - 1 do
@@ -43,7 +43,7 @@ if OLD then
 end
 
 local function rec(name, ...) calls[#calls + 1] = { name, ... } end
-local messages = {}
+local messages, logs = {}, {}
 _G.ac = {
   FlagType = { None = 0, Start = 1, Caution = 2, Stop = 5, ReturnToPits = 8, FasterCar = 12, Finished = 13 },
   PenaltyType = { None = 0, MandatoryPits = 1, TeleportToPits = 2, SlowDown = 3, BlackFlag = 4 },
@@ -70,7 +70,7 @@ _G.ac = {
   getTrackFullID = function() return "fake_track" end,
   getFolder = function(id) return id == 1024 and APP or "/tmp/claude-0/brscc-sim-docs" end,
   setMessage = function(t, d, ty) messages[#messages + 1] = d end,
-  log = function(m) if tostring(m):find("HUD error") then _G.hudError = m end end,
+  log = function(m) logs[#logs + 1] = tostring(m); if tostring(m):find("HUD error") then _G.hudError = m end end,
   onSessionStart = function() end,
   onCarCollision = function() end,
 }
@@ -131,10 +131,11 @@ dofile(APP .. "brscc_race_control.lua")
 
 -- simple physics: cars move at min(base, AI cap); car 0 (player) is scripted -------------------
 local t, dt = 0, 0.05
+PRESTART, T0 = false, 0
 local function tick(n, f)
   for _ = 1, n do
     t = t + dt
-    sim.currentSessionTime = t * 1000
+    sim.currentSessionTime = PRESTART and -1.7976931348623157e308 or (t - T0) * 1000
     for i = 0, N - 1 do
       local c = cars[i]
       if f then f(i, c) end
@@ -161,6 +162,26 @@ local function lastTop(i)
   for k = #calls, 1, -1 do if calls[k][1] == "top" and calls[k][2] == i then return calls[k][3] end end
 end
 
+-- 0. pre-start: the grid waits with AC's clock at -DBL_MAX, then the race goes green with car 5
+--    stalled on its grid slot. Found in-game on v0.2.1: gaps showed the tail of DBL_MAX, and a car
+--    that never launched was never a hazard (it never reached the 50 km/h arming speed).
+local absurd = false
+_G.afterHud = function()
+  for _, d in ipairs(draws) do if d:find("%d%d%d%d%d%d%d%d%d%d") then absurd = true end end
+end
+for i = 0, N - 1 do cars[i].parked = true end
+PRESTART = true; sim.isSessionStarted = false
+tick(100)                                     -- 5 s on the grid before the start
+PRESTART = false; sim.isSessionStarted = true; T0 = t
+for i = 0, N - 1 do if i ~= 5 then cars[i].parked = false end end
+tick(200)                                     -- 10 s of racing, car 5 still stalled
+check("pre-start: no absurd numbers on the HUD (gaps from the -DBL_MAX clock)", not absurd)
+local stallLog = table.concat(logs, " | ")
+check("grid stall: a car that never launched is a hazard", stallLog:find("Driver 5 stopped") ~= nil, stallLog:sub(1, 300))
+cars[5].parked = false
+tick(200)                                     -- it gets going; flags clear behind it
+_G.afterHud = nil
+
 -- 1. race running for 20 s: no flags, no limits
 tick(400)
 check("green racing: no AI caps", lastTop(3) == nil, lastTop(3))
@@ -169,8 +190,7 @@ check("green racing: AC flag untouched", sim.flag == nil or sim.flag == 0, sim.f
 -- 2. car 9 (last on the road) stops on track at its current spot -> double yellow there
 cars[9].stopped = true
 tick(60)  -- 3 s
-local G_msgs = table.concat(messages, " | ")
-check("incident announced", G_msgs:find("Driver 9") ~= nil or true)
+check("incident announced", table.concat(logs, " | "):find("Driver 9 stopped") ~= nil)
 -- run until cars approach car 9's position from behind (they lap round)
 local SNAP = os.getenv("HUD_SNAPSHOTS")   -- directory to write HUD SVGs into (optional)
 local snapped = {}
