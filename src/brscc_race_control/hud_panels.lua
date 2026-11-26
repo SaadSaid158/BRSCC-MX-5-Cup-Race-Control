@@ -27,7 +27,9 @@ function M.flags(v, arrange)
   if v.mode == "race" then f = v.postFlag or v.lineBoard else f = v.flag end
   if not f and arrange then f = DEMO.flag end
   if not f then return end
-  return H.flagStation(f, v.scale, v.t)
+  local w, h = H.flagStation(f, v.scale, v.t)
+  if f == DEMO.flag then H.sample(w) end
+  return w, h
 end
 
 -- ── the lap as a strip of marshal sectors ────────────────────────────────────────────────
@@ -43,7 +45,7 @@ function M.strip(v, arrange)
   local posts = st.posts
   local function segCol(seg)
     if seg.level > 0 then return C.yellow elseif seg.green then return C.green end
-    return C.seg
+    return v.glass and C.segGlass or C.seg      -- frosted glass swallows a 10% segment
   end
   for k = 1, #posts do
     local a = posts[k].from
@@ -82,6 +84,7 @@ function M.messages(v, arrange)
   H.rect(inset, inset, tagW, h - 2 * inset, tk.col or C.timing, H.inner(8))
   H.text(tag, 15 * s, inset + pad, 10 * s, C.black, F.label)
   H.text(tk.text, size, inset + tagW + pad, 8 * s, C.ink)
+  if tk == DEMO.ticker then H.sample(w) end
   return w, h
 end
 
@@ -125,6 +128,7 @@ function M.timing(v, arrange)
     H.text(row[3], 20 * s, w - pad, y + 3 * s, C.ink, F.num, 1)
     y = y + rowH
   end
+  if r == DEMO.race then H.sample(w) end
   return w, h
 end
 
@@ -146,7 +150,7 @@ function M.record(v, arrange)
   H.text("TRACK LIMITS", 13 * s, pad, 10 * s, C.mute, F.label)
   local pipW = (w - 2 * pad - 5 * 4 * s) / 6
   for k = 1, 6 do
-    local col = C.seg
+    local col = v.glass and C.segGlass or C.seg
     if k <= (rc.tl or 0) then col = (k >= 5) and C.red or C.amber end
     H.rect(pad + (k - 1) * (pipW + 4 * s), 30 * s, pipW, 6 * s, col, H.inner(3))
   end
@@ -155,6 +159,7 @@ function M.record(v, arrange)
   H.text("PENALTIES", 13 * s, pad, 74 * s, C.mute, F.label)
   local y = 92 * s
   for _, l in ipairs(lines) do H.text(l[1], 17 * s, pad, y, l[2], F.label); y = y + 24 * s end
+  if rc == DEMO.record then H.sample(w) end
   return w, h
 end
 
@@ -165,7 +170,9 @@ function M.pitBoard(v, arrange)
   if pb then lines = {} for _, l in ipairs({ pb.l1, pb.l2, pb.l3 }) do if l then lines[#lines + 1] = l end end
   elseif arrange then lines = DEMO.pit end
   if not lines then return end
-  return H.pitBoard(lines, v.scale)
+  local w, h = H.pitBoard(lines, v.scale)
+  if lines == DEMO.pit then H.sample(w, C.black) end
+  return w, h
 end
 
 return M

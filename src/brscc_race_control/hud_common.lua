@@ -16,14 +16,14 @@ M.C = {
   rule = rgbm(1, 1, 1, 0.13),
   ink = rgbm(0.95, 0.95, 0.93, 1),
   mute = rgbm(0.6, 0.62, 0.65, 1),
-  timing = rgbm(1, 0.82, 0, 1),               -- timing-screen yellow: position, live values
+  timing = rgbm(0.97, 0.97, 0.95, 1),         -- the accent is white: in a car, yellow only ever means a yellow flag
   amber = rgbm(1, 0.62, 0.1, 1),
   red = rgbm(0.95, 0.2, 0.18, 1),
   -- the flags themselves (Motorsport UK colours, as cloth)
   yellow = rgbm(1, 0.84, 0, 1), green = rgbm(0, 0.6, 0.27, 1), black = rgbm(0.02, 0.02, 0.02, 1),
   white = rgbm(0.97, 0.97, 0.95, 1), purple = rgbm(0.45, 0.2, 0.72, 1),
   pole = rgbm(0.55, 0.57, 0.6, 1), alu = rgbm(0.66, 0.68, 0.7, 1),
-  seg = rgbm(1, 1, 1, 0.1), car = rgbm(0.8, 0.82, 0.84, 1),
+  seg = rgbm(1, 1, 1, 0.1), segGlass = rgbm(1, 1, 1, 0.22), car = rgbm(0.8, 0.82, 0.84, 1),
 }
 local C = M.C
 
@@ -88,6 +88,11 @@ function M.panel(w, h)
 end
 -- radius for small inner shapes (segments, pips, rows): rounded on glass, square on solid
 function M.inner(px) local v = M.ctx; return (v and v.glass) and px * v.scale or 0 end
+-- arrange mode: mark a panel's sample content so it can't be mistaken for a real flag or penalty
+function M.sample(w, col)
+  local s = M.ctx and M.ctx.scale or 1
+  M.text("SAMPLE", 11 * s, w - 8 * s, 3 * s, col or C.mute, M.F.label, 1)
+end
 -- corner radius of the current panel, for anything drawn flush with its edge
 function M.radius() local v = M.ctx; return (v and v.glass) and M.R * v.scale or 0 end
 
@@ -143,7 +148,8 @@ end
 function M.flagStation(f, s, t)
   local fw, fh, gap, pad = 92 * s, 60 * s, 14 * s, 16 * s
   local textX = pad
-  local h = 128 * s
+  -- tall enough for the pole (1.5 x the cloth) and, when shown, the post board hung under it
+  local h = pad + fh * 1.5 + (f.post and (4 + 30) * s or 0) + pad
   -- measure the text block first so the panel fits it
   local tw = math.max(M.measure(f.title, 36 * s, M.F.num),
     f.line1 and M.measure(f.line1, 18 * s) or 0, f.line2 and M.measure(f.line2, 15 * s) or 0)

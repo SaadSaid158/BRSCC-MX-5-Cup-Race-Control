@@ -75,7 +75,7 @@ local function say(text, toPlayer, illegal)
   G.log[#G.log + 1] = "[" .. fmtTime(sim.currentSessionTime) .. "] " .. text
   ac.log("BRSCC RC: " .. text)
   if toPlayer then ac.setMessage("Race Control", text, illegal and "illegal" or nil, 7) end
-  G.ticker = { text = text, t = G.clock or 0, col = illegal and rgbm(1, 0.29, 0.29, 1) or nil }
+  G.ticker = { text = text, t = G.clock or 0, col = illegal and rgbm(1, 0.62, 0.1, 1) or nil }   -- amber: an offence
 end
 
 -- Marshal posts: a recorded map (map builder) wins; otherwise generated from the track geometry
