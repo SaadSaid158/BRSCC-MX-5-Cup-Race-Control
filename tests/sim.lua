@@ -26,6 +26,23 @@ for i = 0, N - 1 do
     collidedWith = 0, collisionDepth = 0, baseKmh = 120, topCap = math.huge, parked = false, bestLapTimeMs = 59000 }
 end
 
+-- OLD_CSP=1: behave like CSP 0.2.11, where the car/sim state is an FFI struct and reading a field
+-- that version doesn't have THROWS (this is what broke v0.2.0 in-game: no AI track limits, empty trace).
+local OLD = os.getenv("OLD_CSP") == "1"
+local OLD_MISSING = { isRequestingPitStop = true, fuelPerLap = true, maxFuel = true, fuel = true,
+  engineLifeLeft = true, gearboxDamage = true, bestLapTimeMs = true, time = true, windowWidth = true,
+  windowHeight = true, uiScale = true }
+local function strict(t)
+  return setmetatable(t, { __index = function(_, k)
+    if OLD and OLD_MISSING[k] then error("'struct ac_car_state' has no member named '" .. k .. "'", 2) end
+  end })
+end
+if OLD then
+  for i = 0, N - 1 do cars[i].bestLapTimeMs = nil; strict(cars[i]) end
+  sim.time = nil; sim.windowWidth = nil; sim.windowHeight = nil; sim.uiScale = nil
+  strict(sim)
+end
+
 local function rec(name, ...) calls[#calls + 1] = { name, ... } end
 local messages = {}
 _G.ac = {
@@ -138,7 +155,7 @@ local function tick(n, f)
     if _G.afterHud then _G.afterHud() end
     script.rcWindow(dt)
     script.rcSettings(dt)
-    sim.time = t * 1000
+    if not OLD then sim.time = t * 1000 end
   end
 end
 local function lastTop(i)
@@ -237,6 +254,9 @@ check("AI drive-through registered served (no DSQ later)", (function()
   return true end)())
 
 -- 6b. pit guard: car 6 asks to pit with no reason and is short of fuel
+if OLD then
+  check("OLD CSP: missing fields reported, not fatal", true)
+else
 cars[6].isRequestingPitStop = true; cars[6].fuel = 1; cars[6].fuelPerLap = 1.2; cars[6].maxFuel = 45
 tick(4)
 local cancelled, fuelled = false, false
@@ -247,6 +267,7 @@ end
 check("unscheduled AI pit request cancelled", cancelled)
 check("under-fuelled AI topped up to enough to finish (laps left + 1.5)", fuelled and cars[6].fuel >= 1.8, cars[6].fuel)
 cars[6].isRequestingPitStop = false
+end
 -- drive-through served -> request switched OFF again (v0.1.1 left it on)
 local off4 = false
 for _, c in ipairs(calls) do if c[1] == "pit" and c[2] == 4 and c[3] == false then off4 = true end end
@@ -283,6 +304,8 @@ if trace then
 end
 if saved then
   check("report marked provisional", saved:find("PROVISIONAL") ~= nil)
+  check("report has compatibility section", saved:find("COMPATIBILITY") ~= nil)
+  if OLD then check("report lists the missing CSP fields", saved:find("isRequestingPitStop") ~= nil) end
   check("player DSQ in report", saved:find("DSQ%s+Driver 0") ~= nil)
   print("---- report head ----")
   local n = 0

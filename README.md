@@ -8,7 +8,7 @@ A Lua app for Assetto Corsa (Custom Shaders Patch) that runs offline races as re
 
 Every rule is traced to the **2026 BRSCC Mazda MX-5 Championship Sporting & Technical Regulations** and the **Motorsport UK National Competition Rules (NCR) 2026**.
 
-> Status: **v0.2.0, early development.** v0.1.x was tested in-game at Silverstone International; v0.2.0 (new HUD, settings, automatic marshal posts) is awaiting its first in-game test.
+> Status: **v0.2.1, early development.** v0.1.x was tested in-game at Silverstone International; v0.2.0 (new HUD, settings, automatic marshal posts) is awaiting its first in-game test.
 > See [Roadmap](#roadmap).
 
 ## Requirements
@@ -79,13 +79,16 @@ luajit tests/run.lua
 luajit tests/sim.lua
 ```
 ```bash
+OLD_CSP=1 luajit tests/sim.lua
+```
+```bash
 scripts/package.sh
 ```
 CI runs both test suites on every push.
 
 **Rules of the codebase:**
 - Every rule value lives in `rules.lua`, with its regs/NCR reference. Where the regs leave something open, the value is marked `OURS`.
-- Every CSP API call is checked against the SDK definitions (`docs/API_NOTES.md`).
+- Every CSP API call is checked against the SDK definitions (`docs/API_NOTES.md`). Any car or sim field newer than the v0.1.0 set is read through `compat.get`: on older CSP versions, reading a missing field throws.
 - The rules logic is kept pure (no CSP calls) so it can be unit-tested.
 
 ## Roadmap

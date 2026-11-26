@@ -16,9 +16,10 @@ local HUD_R = require("hud_race")
 local SET = require("settings")
 local AP = require("autoposts")
 local GP = require("gaps")
+local CX = require("compat")
 local P = require("points")
 
-local VERSION = "0.2.0"
+local VERSION = "0.2.1"
 SET.load()
 local sim = ac.getSim()
 local G = nil
@@ -74,7 +75,7 @@ local function say(text, toPlayer, illegal)
   G.log[#G.log + 1] = "[" .. fmtTime(sim.currentSessionTime) .. "] " .. text
   ac.log("BRSCC RC: " .. text)
   if toPlayer then ac.setMessage("Race Control", text, illegal and "illegal" or nil, 7) end
-  G.ticker = { text = text, t = sim.time / 1000, col = illegal and rgbm(1, 0.29, 0.29, 1) or nil }
+  G.ticker = { text = text, t = G.clock or 0, col = illegal and rgbm(1, 0.29, 0.29, 1) or nil }
 end
 
 -- Marshal posts: a recorded map (map builder) wins; otherwise generated from the track geometry
@@ -120,7 +121,7 @@ local function init()
     excursions = { "t_s,car,ai,spline,duration_s,max_wheels_outside,max_wheels_beyond,surfaces_fl_fr_rl_rr,counted" },
     laps = {}, finished = {}, contacts = {},
     messages = {}, log = {}, lastFlag = nil, reportWritten = false, mapSource = mapSource,
-    gaps = GP.new(), lineT = nil,
+    gaps = GP.new(), lineT = nil, clock = 0,
     trace = { "t_s,car,ai,spline,lap,kmh,ai_cap_kmh,flag_level,hazard,wheels_out,in_pit,in_box,req_pit,fuel_l,fuel_per_lap,engine_life,gearbox_dmg" }, traceT = 0,
   }
   for i = 0, sim.carsCount - 1 do
@@ -261,6 +262,13 @@ local function writeReport(force)
   end
 
   w("")
+  w("COMPATIBILITY")
+  w("  CSP: " .. CX.cspVersion())
+  local miss = CX.missingList()
+  w("  Fields not in this CSP version: " .. (#miss > 0 and table.concat(miss, ", ") or "none"))
+  if #CX.errorOrder == 0 then w("  Script errors: none") end
+  for _, k in ipairs(CX.errorOrder) do w(("  ERROR x%d  %s"):format(CX.errors[k], k)) end
+  w("")
   w("RACE CONTROL LOG")
   for _, l in ipairs(G.log) do w("  " .. l) end
   w("")
@@ -284,8 +292,11 @@ local function writeReport(force)
 end
 
 -- main tick -----------------------------------------------------------------------------
-function script.rcUpdate(dt)
+local update
+function script.rcUpdate(dt) CX.guard("update", update, dt) end
+update = function(dt)
   if sim.isOnlineRace or sim.isPaused or sim.isReplayActive then return end
+  if G then G.clock = G.clock + dt end
   if not G then init() end
   if not G.kind then return end
   local L = sim.trackLengthM
@@ -296,7 +307,7 @@ function script.rcUpdate(dt)
   for _, car in ac.iterateCars() do
     local i = car.index
     GP.update(G.gaps, i, car.lapCount, car.splinePosition, sim.currentSessionTime / 1000)
-    if i == 0 and G.prev[0] and car.lapCount > G.prev[0].lap then G.lineT = sim.time / 1000 end
+    if i == 0 and G.prev[0] and car.lapCount > G.prev[0].lap then G.lineT = G.clock end
     local beyond, codes = wheelsBeyond(car)
     snap[i] = { spline = car.splinePosition, speed = car.speedKmh, wheelsOut = car.wheelsOutside,
       inPit = car.isInPitlane, retired = car.isRetired, lap = car.lapCount, beyond = beyond, codes = codes }
@@ -358,7 +369,7 @@ function script.rcUpdate(dt)
   end
 
   -- 4. per car: track limits, laps, pit lane, finish, AI
-  for _, car in ac.iterateCars() do
+  for _, car in ac.iterateCars() do CX.guard("car " .. car.index, function()
     local i = car.index
     local s, d, pv = snap[i], G.drivers[i], G.prev[i]
     if not d then d = ST.newDriver(i); G.drivers[i] = d; G.laps[i] = {}; G.tlLaps[i] = {} end
@@ -434,7 +445,7 @@ function script.rcUpdate(dt)
           if sess and not sess.isTimedRace and (sess.laps or 0) > 0 then
             lapsLeft = math.max(0, sess.laps - car.lapCount)
           else
-            lapsLeft = math.ceil((sim.sessionTimeLeft or 0) / 1000 / math.max(60, (car.bestLapTimeMs or 0) / 1000)) + 1
+            lapsLeft = math.ceil((sim.sessionTimeLeft or 0) / 1000 / math.max(60, CX.get(car, "bestLapTimeMs", 0) / 1000)) + 1
           end
           local msg = AI.pitGuard(i, car, { lapsLeft = lapsLeft, rcWantsPit = #d.pending > 0,
             now = sim.currentSessionTime / 1000, dt = dt })
@@ -445,21 +456,23 @@ function script.rcUpdate(dt)
       end
     end
 
-    G.prev[i] = { lap = car.lapCount, inPit = car.isInPitlane }
+  end)
+    -- always advance the previous-frame state, even if this car's processing failed
+    G.prev[car.index] = { lap = car.lapCount, inPit = car.isInPitlane }
   end
 
   -- trace (2 Hz) for tuning: data/trace.csv next to the report
   G.traceT = G.traceT + dt
   if G.traceT >= 0.5 and #G.trace < 200000 then
     G.traceT = 0
-    for i, s in pairs(snap) do
+    for i, s in pairs(snap) do CX.guard("trace", function()
       local c = ac.getCar(i)
       G.trace[#G.trace + 1] = ("%.1f,%d,%d,%.4f,%d,%.1f,%s,%d,%d,%d,%d,%d,%d,%.2f,%.3f,%.0f,%.3f"):format(
         sim.currentSessionTime / 1000, i, c.isAIControlled and 1 or 0, s.spline, s.lap, s.speed,
         AI.capOf(i) and ("%.0f"):format(AI.capOf(i)) or "", s.level or 0, D.isHazard(G.det, i) and 1 or 0,
-        s.wheelsOut, s.inPit and 1 or 0, c.isInPit and 1 or 0, c.isRequestingPitStop and 1 or 0,
-        c.fuel or -1, c.fuelPerLap or -1, c.engineLifeLeft or -1, c.gearboxDamage or -1)
-    end
+        s.wheelsOut, s.inPit and 1 or 0, c.isInPit and 1 or 0, CX.get(c, "isRequestingPitStop", false) and 1 or 0,
+        CX.get(c, "fuel", -1), CX.get(c, "fuelPerLap", -1), CX.get(c, "engineLifeLeft", -1), CX.get(c, "gearboxDamage", -1))
+    end) end
   end
 
   -- 5. player's HUD flag (AC can show Caution / Stop / ReturnToPits natively)
@@ -513,9 +526,10 @@ local function buildView()
   local me = ac.getCar(0)
   local L = sim.trackLengthM
   local d = G.drivers[0]
-  local now = sim.time / 1000
+  local now = G.clock
   local s = SET.get("hudScale")
-  local v = { scale = s, W = sim.windowWidth / sim.uiScale, H = sim.windowHeight / sim.uiScale }
+  local ui_ = CX.get(sim, "uiScale", 1)
+  local v = { scale = s, W = CX.get(sim, "windowWidth", 1920) / ui_, H = CX.get(sim, "windowHeight", 1080) / ui_ }
 
   -- course flag at the player's position (same logic the AI obeys)
   local lvl, k = F.levelFor(G.flags, me.splinePosition, L)
@@ -607,7 +621,7 @@ local function buildView()
     if bestA then r.aheadName, r.ahead = short(bestA[2]), { value = bestA[1] / spd } end
     if bestB then r.behindName, r.behind = short(bestB[2]), { value = bestB[1] / spd } end
   end
-  r.last, r.best = lapTime(me.previousLapTimeMs), lapTime(me.bestLapTimeMs)
+  r.last, r.best = lapTime(me.previousLapTimeMs), lapTime(CX.get(me, "bestLapTimeMs", nil))
   v.race = r
 
   -- driver's record
@@ -657,6 +671,12 @@ function script.rcSettings(dt)
   if sim.isOnlineRace then ui.text("BRSCC Race Control is offline-only."); return end
   ui.text(("BRSCC Race Control v%s"):format(VERSION))
   if G and G.hudErr then ui.textColored("HUD error: " .. G.hudErr, rgbm(1, 0.3, 0.3, 1)) end
+  for n = 1, math.min(3, #CX.errorOrder) do
+    local k = CX.errorOrder[n]
+    ui.textColored(("Script error (x%d): %s"):format(CX.errors[k], k), rgbm(1, 0.3, 0.3, 1))
+  end
+  local miss = CX.missingList()
+  if #miss > 0 then ui.textColored("CSP " .. CX.cspVersion() .. " lacks: " .. table.concat(miss, ", ") .. " (handled)", rgbm(1, 0.7, 0.2, 1)) end
   ui.tabBar("rcTabs", nil, function()
     ui.tabItem("Display", nil, function()
       ui.header("HUD mode")

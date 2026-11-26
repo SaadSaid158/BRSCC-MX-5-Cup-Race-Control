@@ -1,5 +1,6 @@
 -- ai.lua: makes AI cars obey race control. CSP API (see API_NOTES.md).
 local R = require("rules")
+local CX = require("compat")
 
 local M = {}
 local cars = {}   -- [i] = { limited=bool, entry=kmh, lastLevel=0, pitRequested=bool, parked=bool }
@@ -86,7 +87,8 @@ local function diag(car)
   local dmg = 0
   pcall(function() for z = 0, 3 do dmg = math.max(dmg, car.damage[z] or 0) end end)
   return ("fuel %.1f L (%.2f L/lap), engine life %.0f/1000, gearbox dmg %.2f, body dmg %.0f, tyre wear %.0f%%"):format(
-    car.fuel or -1, car.fuelPerLap or -1, car.engineLifeLeft or -1, car.gearboxDamage or -1, dmg, wear * 100)
+    CX.get(car, "fuel", -1), CX.get(car, "fuelPerLap", -1), CX.get(car, "engineLifeLeft", -1),
+    CX.get(car, "gearboxDamage", -1), dmg, wear * 100)
 end
 M.diag = diag
 
@@ -95,16 +97,17 @@ function M.pitGuard(i, car, ctx)
   if ctx.rcWantsPit or c.parked then c.guardActive = false; return nil end
   local msg = nil
   -- Fuel: a real car starts with enough for the race. Only top up if AC under-fuelled the AI.
-  local fpl = car.fuelPerLap or 0
-  if fpl > 0 and car.maxFuel and car.maxFuel > 0 and ctx.lapsLeft then
+  local fpl = CX.get(car, "fuelPerLap", 0)            -- not in every CSP version: compat.lua
+  local maxFuel, fuel = CX.get(car, "maxFuel", 0), CX.get(car, "fuel", 0)
+  if fpl > 0 and maxFuel > 0 and ctx.lapsLeft then
     local need = fpl * (ctx.lapsLeft + 1.5)
-    if car.fuel < need and (not c.fuelT or ctx.now - c.fuelT > 10) then
+    if fuel < need and (not c.fuelT or ctx.now - c.fuelT > 10) then
       c.fuelT = ctx.now
-      physics.setCarFuel(i, math.min(car.maxFuel, need + fpl))
+      physics.setCarFuel(i, math.min(maxFuel, need + fpl))
       if not c.fuelNoted then c.fuelNoted = true; msg = "under-fuelled by AC, topped up: " .. diag(car) end
     end
   end
-  if car.isRequestingPitStop or (car.isInPitlane and not car.isInPit and not c.guardActive) then
+  if CX.get(car, "isRequestingPitStop", false) or (car.isInPitlane and not car.isInPit and not c.guardActive) then
     physics.setAIPitStopRequest(i, false)
     if not c.guardActive then
       c.guardActive = true
