@@ -341,5 +341,59 @@ do
   eq("ini: unlisted player to the back", slot2, 4)
 end
 
+-- meeting ----------------------------------------------------------------------------------------------
+do
+  local MT = require("meeting")
+  local entries = { { name = "Me", isPlayer = true, keys = {} }, { name = "A", keys = {} }, { name = "B", keys = {} },
+    { name = "C", keys = {} }, { name = "D", keys = {} } }
+  local m = MT.new("t1", "ks_silverstone", entries, { qualiMinutes = 15, raceLaps = 10 })
+  eq("meeting starts in qualifying", MT.current(m).key, "qualifying")
+  eq("qualifying spec: minutes", MT.spec(m).minutes, 15)
+
+  -- qualifying: C fastest, Me 2 laps only (REGS 2.3.2 -> back), D no valid lap
+  local order = MT.recordQualifying(m, {
+    { name = "Me", bestMs = 60000, laps = 2 }, { name = "A", bestMs = 61000, laps = 5 },
+    { name = "B", bestMs = 61500, laps = 4 }, { name = "C", bestMs = 60500, laps = 6 }, { name = "D", laps = 3 } })
+  eq("quali order: short-run driver and no-time to the back", table.concat(order, ","), "C,A,B,D,Me")
+
+  -- a 2-place grid drop for A carried from qualifying
+  MT.carryLedger(m, { A = { gridDrop = 2, penaltyPoints = 3 } })
+  local g1 = MT.advance(m)
+  eq("race 1 grid with A dropped 2", table.concat(g1, ","), "C,B,D,A,Me")
+  eq("race 1 spec: laps", MT.spec(m).laps, 10)
+  eq("penalty points carried", m.drivers.A.penaltyPoints, 3)
+
+  -- race 1: B wins; Me lapped (9 laps, within 4 min) classified; D 7 laps (< 80% of 10 = 8) NC;
+  -- A crosses 5 minutes after the winner -> NC; C a +10 s penalty drops behind Me
+  local out = MT.recordRace(m, {
+    { name = "B", laps = 10, finishMs = 900000, bestMs = 88000 },
+    { name = "C", laps = 10, finishMs = 902000, penaltyS = 10, bestMs = 87000 },
+    { name = "A", laps = 10, finishMs = 1200001 },
+    { name = "Me", laps = 9, finishMs = 960000 },
+    { name = "D", laps = 7, finishMs = 950000 } })
+  local names, cls = {}, {}
+  for _, r in ipairs(out) do names[#names + 1] = r.name; cls[#cls + 1] = r.classified and "y" or "n" end
+  eq("race 1 order", table.concat(names, ","), "B,C,A,Me,D")
+  eq("race 1 classified flags (Art.1.11)", table.concat(cls, ","), "y,y,n,y,n")
+  eq("winner points", out[1].points, 100)
+  eq("P2 + fastest lap", out[2].points, 99)
+  eq("lapped finisher scores 3rd place", out[4].points, 96)
+  eq("NC scores nothing", out[5].points, 0)
+
+  -- race 2's grid is race 1's result
+  local g2 = MT.advance(m)
+  eq("race 2 grid from race 1", table.concat(g2, ","), "B,C,A,Me,D")
+  -- a grid drop past the back puts the driver last
+  eq("drop past the back -> last", table.concat(MT.applyGridDrops({ "X", "Y", "Z" }, { X = 9 }), ","), "Y,Z,X")
+  eq("drop capped at 10 places", #MT.applyGridDrops({ "X" }, { X = 50 }), 1)
+
+  MT.recordRace(m, { { name = "Me", laps = 10, finishMs = 900000 }, { name = "B", laps = 10, finishMs = 901000 } })
+  MT.advance(m)
+  MT.recordRace(m, { { name = "Me", laps = 10, finishMs = 900000 } })
+  MT.advance(m)
+  eq("meeting finished after race 3", MT.finished(m), true)
+  eq("standings leader", MT.standings(m)[1].name, "Me")
+end
+
 print(("%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

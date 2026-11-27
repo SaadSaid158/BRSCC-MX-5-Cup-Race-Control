@@ -12,6 +12,8 @@ local YP = require("yellowpass")
 local ST = require("stewards")
 local AI = require("ai")
 local HP = require("hud_panels")
+local MT = require("meeting")
+local RI = require("raceini")
 local HC = require("hud_common")
 local SET = require("settings")
 local AP = require("autoposts")
@@ -200,6 +202,80 @@ local function onPassEvent(ev, cars)
   end
 end
 
+-- meeting -------------------------------------------------------------------------------------
+-- A meeting (REGS 2.3.3: qualifying + races 1-3) lives in Documents/.../brscc-race-control/meetings/.
+-- Between sessions the app writes race.ini and relaunches AC (verified in-game, docs/API_NOTES.md).
+local function bestValid(i)
+  local best
+  for _, l in ipairs(G.laps[i] or {}) do if l.valid and (not best or l.ms < best) then best = l.ms end end
+  return best
+end
+local function raceRows()
+  local rows = {}
+  for i = 0, sim.carsCount - 1 do
+    local car, d = ac.getCar(i), G.drivers[i]
+    if car and d then
+      rows[#rows + 1] = { i = i, name = name(i), laps = car.lapCount, finishMs = G.finished[i],
+        penaltyS = d.timePenaltyS, dsq = d.dsq or G.black[i], bestMs = bestValid(i) }
+    end
+  end
+  return rows
+end
+local function meetingDir()
+  local dir = ac.getFolder(ac.FolderID.ACDocuments) .. "/brscc-race-control"
+  io.createDir(dir); io.createDir(dir .. "/meetings")
+  return dir .. "/meetings"
+end
+local function raceIniPath() return ac.getFolder(ac.FolderID.ACDocuments) .. "/cfg/race.ini" end
+local function saveMeeting(m)
+  local dir, text = meetingDir(), JSON.stringify(m)
+  io.save(dir .. "/" .. m.id .. ".json", text)
+  io.save(dir .. "/active.json", text)
+end
+-- The active meeting, if this session is the one it expects (same track, session named as it wrote).
+local function attachMeeting(trackId)
+  local m
+  pcall(function()
+    local data = JSON.parse(io.load(meetingDir() .. "/active.json"))
+    if type(data) == "table" and data.entries then m = data end
+  end)
+  if not m or MT.finished(m) or m.track ~= trackId then return nil end
+  local here
+  pcall(function() here = RI.parse(io.load(raceIniPath())).sections.SESSION_0.NAME end)
+  if here ~= MT.current(m).name then return nil end
+  return m
+end
+local function relaunch(m, grid)
+  local text = RI.forSession(m.entries, grid, MT.spec(m))
+  ac.log("BRSCC RC meeting: relaunching into " .. MT.current(m).name)
+  ac.restartAssettoCorsa(text)
+end
+-- The meeting this session belongs to (looked up once per session).
+local function meetingNow()
+  if not G.meetingChecked then G.meetingChecked = true; G.meeting = attachMeeting(G.trackId) end
+  return G.meeting
+end
+
+-- Record the finished session into the meeting (once).
+local function recordMeeting()
+  local m = meetingNow()
+  if not m or G.meetingRecorded then return end
+  G.meetingRecorded = true
+  local ledger = {}
+  for i, d in pairs(G.drivers) do ledger[name(i)] = { penaltyPoints = d.penaltyPoints, gridDrop = d.gridDrop } end
+  if G.kind == "qualifying" then
+    local rows = {}
+    for i = 0, sim.carsCount - 1 do
+      if ac.getCar(i) then rows[#rows + 1] = { name = name(i), bestMs = bestValid(i), laps = #(G.laps[i] or {}) } end
+    end
+    MT.recordQualifying(m, rows)
+  elseif G.kind == "race" then
+    MT.recordRace(m, raceRows())
+  end
+  MT.carryLedger(m, ledger)
+  saveMeeting(m)
+end
+
 -- report ---------------------------------------------------------------------------------
 local function writeReport(force)
   if (G.reportWritten and not force) or not G.kind then return end
@@ -224,25 +300,18 @@ local function writeReport(force)
   end
 
   if G.kind == "race" then
-    table.sort(rows, function(a, b)
-      if a.d.dsq ~= b.d.dsq then return not a.d.dsq end
-      if a.car.lapCount ~= b.car.lapCount then return a.car.lapCount > b.car.lapCount end
-      if a.fin and b.fin then return a.fin < b.fin end
-      if a.fin or b.fin then return a.fin ~= nil end
-      return a.car.racePosition < b.car.racePosition
-    end)
-    -- fastest valid lap (REGS 1.6.1: not if set while breaching App.7 1.6)
-    local fl
-    for _, r in ipairs(rows) do if r.best and not r.d.dsq and (not fl or r.best < fl.ms) then fl = { id = r.i, ms = r.best } end end
-    local res = {}
-    for _, r in ipairs(rows) do res[#res + 1] = { id = r.i, classified = r.fin ~= nil, dsq = r.d.dsq } end
-    local pts = P.race(res, fl and { id = fl.id, valid = true } or nil)
+    -- classification per NCR Ch.12 App.9 Art.1.11 (meeting.lua): 80% of the winner's laps, across the
+    -- line within 4 minutes of the winner; time penalties added to the finish time
+    local cls, fastestName = MT.classifyRace(raceRows())
     w("POS  DRIVER                      LAPS  FINISH(+PEN)   PEN   TL  PP  POINTS")
-    for pos, r in ipairs(rows) do
-      w(("%-4s %s %4d  %-12s %4ds %3d %3d  %d"):format(r.d.dsq and "DSQ" or tostring(pos), pad(name(r.i), 27),
-        r.car.lapCount, r.fin and fmtTime(r.fin) or (r.d.dsq and "-" or "NC"), r.d.timePenaltyS,
-        r.d.trackLimits, r.d.penaltyPoints, pts[r.i] or 0))
+    for pos, r in ipairs(cls) do
+      local d = G.drivers[r.i]
+      local fin = r.finishMs and fmtTime(r.finishMs + (r.penaltyS or 0) * 1000) or "-"
+      w(("%-4s %s %4d  %-12s %4ds %3d %3d  %d"):format(r.dsq and "DSQ" or (r.classified and tostring(pos) or "NC"),
+        pad(r.name, 27), r.laps, r.classified and fin or ("NC " .. fin), r.penaltyS or 0, d.trackLimits, d.penaltyPoints, r.points))
     end
+    local fl
+    for _, r in ipairs(cls) do if r.name == fastestName then fl = { id = r.i, ms = r.bestMs } end end
     if fl then w(("Fastest valid lap: %s %s (+1 point)"):format(name(fl.id), fmtLap(fl.ms))) end
   else
     table.sort(rows, function(a, b)
@@ -289,6 +358,21 @@ local function writeReport(force)
   end
   io.save(base .. ".json", JSON.stringify({ version = VERSION, track = G.trackId, session = G.kind, drivers = ledger }))
   say("Provisional report written: Documents/Assetto Corsa/brscc-race-control/reports", true)
+  CX.guard("meeting", recordMeeting)
+end
+
+-- A race is over for race control once every running car has taken the flag, or 4 minutes after the
+-- winner (NCR Ch.12 App.9 Art.1.11: later than that, a car can't be classified anyway).
+local function raceOver()
+  local first
+  for _, t in pairs(G.finished) do if not first or t < first then first = t end end
+  if not first then return false end
+  if sim.currentSessionTime - first > R.classification.afterWinnerS * 1000 then return true end
+  for i = 0, sim.carsCount - 1 do
+    local c = ac.getCar(i)
+    if c and not G.finished[i] and not c.isRetired and not c.isInPitlane and not G.black[i] then return false end
+  end
+  return true
 end
 
 -- main tick -----------------------------------------------------------------------------
@@ -500,7 +584,7 @@ update = function(dt)
   end
 
   -- 6. end of session
-  if sim.isSessionFinished or (G.kind == "race" and G.finished[0] and sim.currentSessionTime - G.finished[0] > 60000) then
+  if sim.isSessionFinished or (G.kind == "race" and raceOver()) then
     writeReport()
   end
 end
@@ -800,11 +884,60 @@ function script.rcSettings(dt)
 end
 
 -- Race Control window: stewards' ledger + log ----------------------------------------------------
+-- Meeting controls in the Race Control window: start one, continue between sessions, standings.
+local meetQualiMin, meetRaceLaps = 15, 10   -- OURS defaults; the event's Final Instructions set the real ones
+local function meetingUI()
+  local m = meetingNow()
+  ui.header("BRSCC meeting")
+  if not m then
+    ui.textWrapped("Qualifying, then races 1, 2 and 3 (REGS 2.3.3). The app sets each grid and relaunches AC " ..
+      "between sessions; this field of drivers stays the same all meeting.")
+    local q, qc = ui.slider("##qmin", meetQualiMin, 5, 30, "Qualifying: %.0f min", true)
+    if qc then meetQualiMin = q end
+    local l, lc = ui.slider("##rlaps", meetRaceLaps, 3, 25, "Races: %.0f laps", true)
+    if lc then meetRaceLaps = l end
+    if ui.button("Start meeting: go to qualifying") then
+      local ini = RI.parse(io.load(raceIniPath()))
+      local entries = RI.entries(ini)
+      local nm = MT.new(os.date("%Y%m%d_%H%M%S") .. "_" .. G.trackId, G.trackId, entries,
+        { qualiMinutes = meetQualiMin, raceLaps = meetRaceLaps })
+      saveMeeting(nm)
+      relaunch(nm, nil)
+    end
+    return
+  end
+  local cur = MT.current(m)
+  ui.text(("%s  ·  %d drivers"):format(cur and cur.name or "Complete", #m.entries))
+  if G.meetingRecorded then
+    local nxt = MT.SESSIONS[m.session + 1]
+    if nxt then
+      if ui.button(("Continue to %s"):format(nxt.name)) then
+        local grid = MT.advance(m)
+        saveMeeting(m)
+        relaunch(m, grid)
+      end
+    else
+      ui.text("Meeting complete. Results are in the reports folder.")
+      if not MT.finished(m) then MT.advance(m); saveMeeting(m) end
+    end
+  else
+    ui.textWrapped("When this session ends, its results go into the meeting and the next session is offered here.")
+  end
+  if m.results.qualifying then
+    ui.header("Meeting standings")
+    for k, st in ipairs(MT.standings(m)) do
+      ui.text(("%2d  %-24s %3d pts%s"):format(k, st.name, st.points,
+        st.penaltyPoints > 0 and ("  (" .. st.penaltyPoints .. " penalty pts)") or ""))
+    end
+  end
+end
+
 function script.rcWindow(dt)
   if sim.isOnlineRace then ui.text("BRSCC Race Control is offline-only."); return end
   if not G then ui.text("Waiting for session..."); return end
   ui.text(("%s  |  %s  |  posts: %d (%s)"):format(G.trackId, G.kind or "unsupported session", #G.map, G.mapSource or "?"))
   if ui.button("Write report now") then writeReport(true) end
+  CX.guard("meetingUI", meetingUI)
   ui.header("Stewards")
   local any = false
   for i = 0, sim.carsCount - 1 do

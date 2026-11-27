@@ -66,6 +66,10 @@ R.scLightsOffLapFraction = function(trackLengthM)  -- NCR Ch.12 App.8 Art.2.10
   return (trackLengthM >= 3218.7) and 0.25 or 0.5 -- 2 miles
 end
 R.minQualifyingLaps = 3                     -- REGS 2.3.2
+
+-- Race classification, NCR Ch.12 App.9 Art.1.11: at least 80% of the winner's laps (decimals
+-- disregarded), crossing the finish line (not in the pit lane) under own power within 4 minutes of the winner.
+R.classification = { minFraction = 0.8, afterWinnerS = 240 }
 R.start = {                                 -- REGS 2.5.2
   oneMinuteS = 60, thirtySecS = 30, fiveSecBoardS = 5,
   redLightsAfterBoardS = 5,
