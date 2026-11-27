@@ -411,5 +411,69 @@ do
   eq("painted numbers kept", a[0] .. "," .. a[2], "01,90")
 end
 
+-- M2: standing start (REGS 2.5.2, NCR App.6) --------------------------------------------------------
+do
+  local SP = require("startproc")
+  local st = SP.new(function() return 3 end)            -- lights out 3 s after red
+  local v = SP.update(st, 0.1)
+  eq("start: 1-minute board first", v.board, "1 MIN")
+  for _ = 1, 600 do v = SP.update(st, 0.1) end            -- 60 s
+  eq("start: then the 30 s board", v.board, "30 SEC")
+  for _ = 1, 300 do v = SP.update(st, 0.1) end
+  eq("start: green-flag lap after 30 s", v.greenLap, true)
+  eq("start: no board on the green-flag lap", v.board, nil)
+  v = SP.update(st, 0.1, { gridComplete = true })
+  eq("start: 5 s board once the grid is complete", v.board, "5 SEC")
+  eq("start: not a jump while still", SP.isJump(st, 0.2), false)
+  eq("start: moving 1 m before lights out is a jump (App.6 Art.7)", SP.isJump(st, 1.0), true)
+  for _ = 1, 52 do v = SP.update(st, 0.1) end
+  eq("start: board withdrawn after 5 s", v.board, nil)
+  eq("start: lights still off", v.lights, "off")
+  for _ = 1, 52 do v = SP.update(st, 0.1) end
+  eq("start: red lights 5 s after the board (REGS 2.5.2 V)", v.lights, "red")
+  for _ = 1, 32 do v = SP.update(st, 0.1) end
+  eq("start: lights out after the random delay", v.lights, "out")
+  eq("start: race started", v.started, true)
+  eq("start: no jump once started", SP.isJump(st, 5), false)
+  eq("start: laggard to the back (REGS 2.5.4)", table.concat(SP.regrid({ "A", "B", "C", "D" }, { B = true }), ","), "A,C,D,B")
+  local delays = {}
+  for k = 1, 200 do
+    local s2 = SP.new(); s2.phase = "withdrawn"; s2.t = 99
+    SP.update(s2, 0.01); delays[#delays + 1] = s2.outAfter
+  end
+  local lo, hi = math.huge, -math.huge
+  for _, d in ipairs(delays) do lo, hi = math.min(lo, d), math.max(hi, d) end
+  eq("start: lights-out delay within 2-7 s (NCR 6.13)", lo >= 2 and hi <= 7, true)
+end
+
+-- M2: blue flags (NCR App.8 1.7 b/c) ---------------------------------------------------------------
+do
+  local BF = require("blueflags")
+  eq("blue: none when nobody close", BF.signal(nil), nil)
+  eq("blue: stationary when a faster car is close", BF.signal(1.5), "stationary")
+  eq("blue: waved when it's trying to pass", BF.signal(0.5), "waved")
+  eq("blue: none at 4 s", BF.signal(4), nil)
+  local st = BF.new()
+  eq("blue: one waved post isn't ignoring", BF.atPost(st, 3, 1, "waved"), false)
+  eq("blue: same post twice counts once", BF.atPost(st, 3, 1, "waved"), false)
+  BF.atPost(st, 3, 2, "waved")
+  eq("blue: ignored after 3 posts -> reported", BF.atPost(st, 3, 3, "waved"), true)
+  eq("blue: reported once", BF.atPost(st, 3, 4, "waved"), false)
+  BF.atPost(st, 3, 5, nil)
+  eq("blue: letting it by resets", st.cars[3].waved, 0)
+end
+
+-- M2: after the chequered flag (REGS 2.8) ------------------------------------------------------------
+do
+  local CD = require("cooldown")
+  local st = CD.new()
+  CD.finished(st, "A"); CD.finished(st, "B"); CD.finished(st, "C")
+  eq("cooldown: holding station is fine", #CD.check(st, { A = 10.2, B = 10.1, C = 10.0 }), 0)
+  local p = CD.check(st, { A = 10.3, B = 10.4, C = 10.2 })
+  eq("cooldown: B passed A after the flag (REGS 2.8 II)", #p == 1 and p[1].passer == "B" and p[1].passed == "A", true)
+  eq("cooldown: reported once", #CD.check(st, { A = 10.4, B = 10.5, C = 10.3 }), 0)
+  eq("cooldown: passing a car in the pit lane is fine", #CD.check(st, { B = 10.6, C = 10.5 }), 0)
+end
+
 print(("%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

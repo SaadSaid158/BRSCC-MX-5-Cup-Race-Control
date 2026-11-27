@@ -187,3 +187,22 @@ Pages read: p411–422. The same edition caveats apply. Sub-article letters were
 - Lights out 2–7 s after the red lights come on.
 - Late or unserved drive-through/stop-go: becomes 30 s (0 penalty points); unserved after 3 laps → DSQ.
 - Qualifying track limits: the lap is deleted.
+
+## 13. BRSCC REGS 2026 (published copy, 27 Mar 2026): race procedures for M2
+Source: [the BRSCC 2026 MX-5 regs PDF](https://brscc.co.uk/wp-content/uploads/2026/03/2026-BRSCC-Mazda-MX5-Championship-Sporting-Technical-Regulations-PUBLISHED-27MAR2026.pdf), read 2026-11-27. Paraphrased.
+- **2.4.3:** at the end of every session, cross the finish line once only.
+- **2.5.1:** cars form up on the grid as the grid sheet sets out.
+- **2.5.2, standing start:**
+  - 1 min to the green-flag lap: start engines, clear the grid.
+  - 30 s: visible and audible warning.
+  - Green-flag lap, then back to grid positions.
+  - The **5 s board** shows the grid is complete.
+  - **Red lights come on 5 s after the board is withdrawn**. They go out to start the race (NCR App.6 6.13: 2–7 s after they come on).
+- **2.5.3:** a car removed from the grid after the 1-min stage, or driven into the pits on the green-flag lap, is held in the pit lane. It starts once the last grid car has passed the start line or the pit exit, whichever is later.
+- **2.5.4:** a driver unable to start signals per NCR App.6 6.11. A car that can't hold its grid position on the green-flag lap, so that every other car is ahead, finishes that lap but **starts from the back of the last row**, ahead of any time-delayed starters.
+- **2.5.5:** if the start lights fail, the national flag is used.
+- **2.7.4:** pit-lane speed limit 60 km/h unless the event's Final Instructions say otherwise (NCR Ch.12).
+- **2.8, after the chequered flag:** slow down progressively and safely; **stay behind any competitor ahead**; return to the pit lane or entrance as instructed; follow marshals and officials.
+- **2.14:** parc fermé starts at the chequered flag (qualifying and races). No work on the cars; cars in the pit lane go straight to parc fermé.
+- **Blue flags and lapping:** not in the BRSCC regs, so the NCR applies: App.8 1.7 (stationary = a faster car close behind; waved = it's trying to pass) and App.7 1.5 (let it by at the first opportunity).
+- **Player teleport at the flag:** AC itself, not this app, sends the player car to the pits when they finish. CSP's `[AI_RACE_COOLDOWN]` in `new_behaviour.ini` is an AI-only cool-down lap (off by default). Whether a Lua app can keep the player on track for a cool-down lap is **open; check in-game**.

@@ -70,10 +70,18 @@ R.minQualifyingLaps = 3                     -- REGS 2.3.2
 -- Race classification, NCR Ch.12 App.9 Art.1.11: at least 80% of the winner's laps (decimals
 -- disregarded), crossing the finish line (not in the pit lane) under own power within 4 minutes of the winner.
 R.classification = { minFraction = 0.8, afterWinnerS = 240 }
+
+-- Blue flags, NCR Ch.12 App.8 1.7 b/c and App.7 1.5 (the BRSCC regs are silent).
+R.blue = {
+  stationaryGapS = 2.0,     -- OURS: a lapping car within this (seconds behind) -> stationary blue ("close behind")
+  wavedGapS = 0.8,          -- OURS: within this -> waved blue ("trying to pass")
+  ignoredPosts = 3,         -- OURS: a waved blue shown at this many posts without letting the car by -> reported
+}
 R.start = {                                 -- REGS 2.5.2
   oneMinuteS = 60, thirtySecS = 30, fiveSecBoardS = 5,
   redLightsAfterBoardS = 5,
   lightsOutMinS = 2, lightsOutMaxS = 7,     -- NCR Ch.12 App.6 Art.6.13: lights out 2-7 s after on
+  jumpMoveM = 0.5,                          -- OURS: moved this far from the grid slot before lights out = jump start
 }
 
 -- Yellow flags (NCR Ch.12 App.8 Art.1.7 e/f, 1.8, 1.10) -------------------------------
