@@ -21,7 +21,7 @@ local GP = require("gaps")
 local CX = require("compat")
 local P = require("points")
 
-local VERSION = "0.2.1"
+local VERSION = "0.3.0"
 SET.load()
 local sim = ac.getSim()
 local G = nil
