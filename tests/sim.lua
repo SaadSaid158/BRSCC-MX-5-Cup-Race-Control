@@ -71,7 +71,8 @@ _G.ac = {
   getFolder = function(id) return id == 1024 and APP or "/tmp/claude-0/brscc-sim-docs" end,
   setMessage = function(t, d, ty) messages[#messages + 1] = d end,
   log = function(m) logs[#logs + 1] = tostring(m); if tostring(m):find("HUD error") then _G.hudError = m end end,
-  onSessionStart = function() end,
+  onSessionStart = function(f) SESSION_START = f end,
+  restartAssettoCorsa = function(text) RESTARTS[#RESTARTS + 1] = text end,
   onCarCollision = function() end,
 }
 _G.physics = {
@@ -85,9 +86,25 @@ _G.physics = {
   awakeCar = function(i) rec("awake", i) end,
   overrideRacingFlag = function(f) rec("flag", f); sim.flag = f end,
 }
-_G.io = { fileExists = function() return false end, load = function() end,
-  save = function(p, c) rec("save", p, c) end, createDir = function() end }
-_G.JSON = { parse = function() end, stringify = function() return "{}" end }
+-- an in-memory file system: what the app saves it can load again (meetings, race.ini)
+FILES, RESTARTS = {}, {}
+_G.io = { fileExists = function(p) return FILES[p] ~= nil end, load = function(p) return FILES[p] end,
+  save = function(p, c) rec("save", p, c); FILES[p] = c end, createDir = function() end }
+-- JSON that round-trips Lua tables (as Lua source); enough for the meeting file
+local function ser(v)
+  local ty = type(v)
+  if ty == "table" then
+    local parts = {}
+    for k, x in pairs(v) do parts[#parts + 1] = "[" .. ser(k) .. "]=" .. ser(x) end
+    return "{" .. table.concat(parts, ",") .. "}"
+  elseif ty == "string" then return ("%q"):format(v) end
+  return tostring(v)
+end
+_G.JSON = { stringify = ser, parse = function(text)
+  if type(text) ~= "string" then return nil end
+  local f = loadstring("return " .. text)
+  return f and f() or nil
+end }
 _G.script = {}
 -- ui mock: records draw calls so the HUD can be rendered to SVG for a visual check
 local draws = {}
@@ -113,6 +130,7 @@ _G.ui = setmetatable({
   end,
   drawQuadFilled = function(a, b, c, d, k) draws[#draws + 1] = ('<polygon points="%.1f,%.1f %.1f,%.1f %.1f,%.1f %.1f,%.1f" fill="%s"/>'):format(a.x, a.y, b.x, b.y, c.x, c.y, d.x, d.y, col(k)) end,
   drawLine = function(a, b, k, t) draws[#draws + 1] = ('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="%.1f"/>'):format(a.x, a.y, b.x, b.y, col(k), t or 1) end,
+  button = function(label) if _G.press and label == _G.press then _G.press = nil; return true end end,
   tabBar = function(_, _, f) f() end,
   tabItem = function(_, _, f) f() end,
   slider = function(_, v) return v, false end,
@@ -356,6 +374,76 @@ if saved then
   local n = 0
   for line in saved:gmatch("[^\r\n]+") do n = n + 1; if n <= 70 then print(line) end end
   print("---------------------")
+end
+
+-- 8. a full meeting (M1): start it, qualify, relaunch, race 1, continue to race 2.
+--    AC's side of a relaunch is played here: race.ini becomes what the app wrote, a new session starts.
+do
+  local DOCS = ac.getFolder(ac.FolderID.ACDocuments)
+  local INI = DOCS .. "/cfg/race.ini"
+  local lines = { "[RACE]", "CARS=" .. N, "TRACK=fake_track", "" }
+  for i = 0, N - 1 do
+    lines[#lines + 1] = "[CAR_" .. i .. "]"; lines[#lines + 1] = "DRIVER_NAME=Driver " .. i
+    lines[#lines + 1] = i == 0 and "MODEL=-" or "MODEL=mx5"; lines[#lines + 1] = ""
+  end
+  lines[#lines + 1] = "[SESSION_0]"; lines[#lines + 1] = "NAME=Quick Race"; lines[#lines + 1] = "TYPE=3"
+  FILES[INI] = table.concat(lines, string.char(13, 10))
+  local RI = require("raceini")
+  local function relaunchInto(kind)
+    FILES[INI] = RESTARTS[#RESTARTS]
+    sim.raceSessionType, session.type, sim.isSessionFinished = kind, kind, false
+    for i = 0, N - 1 do
+      local c = cars[i]
+      c.lapCount, c.isRaceFinished, c.stopped, c.parked, c.isInPitlane = 0, false, false, false, false
+      c.splinePosition, c.wheelsOutside, c.topCap = (0.99 - i * 0.004) % 1, 0, math.huge
+    end
+    T0 = t
+    SESSION_START()
+    tick(1)
+  end
+  local function active() return JSON.parse(FILES[DOCS .. "/brscc-race-control/meetings/active.json"]) end
+
+  _G.press = "Start meeting: go to qualifying"; tick(1)
+  check("meeting: start relaunches into qualifying", #RESTARTS == 1 and RESTARTS[1]:find("NAME=Qualifying") ~= nil
+    and RESTARTS[1]:find("TYPE=2") ~= nil, RESTARTS[1])
+  check("meeting: saved", active() ~= nil and active().session == 1)
+
+  relaunchInto(ac.SessionType.Qualify)
+  cars[0].previousLapTimeMs = 61000                        -- the player qualifies slowest
+  tick(3800)                                               -- 3+ laps each
+  sim.isSessionFinished = true; tick(2)
+  local m = active()
+  check("meeting: qualifying recorded", m and m.results.qualifying ~= nil and #m.results.qualifying.order == N)
+  check("meeting: player qualified last", m and m.results.qualifying.order[N] == "Driver 0",
+    m and table.concat(m.results.qualifying.order, ","))
+
+  _G.press = "Continue to Race 1"; tick(1)
+  local r1 = RI.parse(RESTARTS[#RESTARTS] or "")
+  check("meeting: race 1 relaunch written", #RESTARTS == 2 and r1.sections.SESSION_0.NAME == "Race 1")
+  check("meeting: player starts from the back", r1.sections.SESSION_0.STARTING_POSITION == tostring(N),
+    r1.sections.SESSION_0.STARTING_POSITION)
+  check("meeting: entry list written back", r1.sections.CAR_1.DRIVER_NAME == m.results.qualifying.order[1],
+    r1.sections.CAR_1.DRIVER_NAME)
+
+  relaunchInto(ac.SessionType.Race)
+  cars[0].previousLapTimeMs = 60000
+  tick(400)
+  for i = 1, N - 1 do cars[i].isRaceFinished = true end   -- the AI take the flag first
+  tick(20)
+  cars[0].isRaceFinished = true; tick(20)                  -- everyone in: race control can call it
+  m = active()
+  local r = m and m.results.race1
+  check("meeting: race 1 recorded once every car took the flag", r ~= nil, m and m.session)
+  if r then
+    local cls = 0
+    for _, row in ipairs(r.rows) do if row.classified then cls = cls + 1 end end
+    check("meeting: all finishers classified (Art.1.11)", cls == N, cls)
+    check("meeting: winner has 100 points", r.rows[1].points == 100 or r.rows[1].points == 101, r.rows[1].points)
+  end
+  _G.press = "Continue to Race 2"; tick(1)
+  check("meeting: race 2 relaunch from race 1's result", #RESTARTS == 3 and
+    RI.parse(RESTARTS[3]).sections.CAR_1.DRIVER_NAME == (r and r.order[1] ~= "Driver 0" and r.order[1] or r and r.order[2]),
+    RESTARTS[3] and RI.parse(RESTARTS[3]).sections.CAR_1.DRIVER_NAME)
 end
 
 print(("%d passed, %d failed"):format(pass, fail))
