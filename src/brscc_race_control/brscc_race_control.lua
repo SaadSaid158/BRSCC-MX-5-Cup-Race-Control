@@ -731,6 +731,22 @@ function script.rcSettings(dt)
         testDriver = not testDriver
       end
       ui.textWrapped("For automated in-game testing. Race control still judges the car exactly as it judges you.")
+      ui.header("Relaunch test (M1 groundwork)")
+      ui.textWrapped("Restarts AC into a 3-lap race with the AI grid reversed and you last. Checks that the app " ..
+        "can relaunch through Content Manager and that the grid follows the order we write.")
+      if ui.button("Relaunch: reversed grid, 3 laps") then
+        CX.guard("relaunchTest", function()
+          local RI = require("raceini")
+          local path = ac.getFolder(ac.FolderID.ACDocuments) .. "/cfg/race.ini"
+          local entries = RI.entries(RI.parse(io.load(path)))
+          local grid = {}
+          for k = #entries, 2, -1 do grid[#grid + 1] = entries[k].name end   -- AI reversed
+          grid[#grid + 1] = entries[1].name                                  -- you last
+          local text = RI.forSession(entries, grid, { name = "Relaunch test", type = 3, laps = 3, raceLaps = 3 })
+          ac.log("BRSCC RC relaunch test: grid " .. table.concat(grid, ", "))
+          ac.restartAssettoCorsa(text)
+        end)
+      end
     end)
     ui.tabItem("AI", nil, function()
       check("Pit guard: in races AI pit only when race control sends them", "aiPitGuard")

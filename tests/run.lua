@@ -310,5 +310,36 @@ do
   SET.set("trackLimitWheels", 1)
 end
 
+-- race.ini ------------------------------------------------------------------------------------------
+do
+  local RI = require("raceini")
+  -- sections out of order, like CM writes them
+  local text = "[CAR_0]\r\nSKIN=blue\r\nMODEL=-\r\nDRIVER_NAME=Saad Said\r\n\r\n[CAR_2]\r\nMODEL=mx5\r\nDRIVER_NAME=Bea\r\n" ..
+    "AI_LEVEL=100\r\nAI_AGGRESSION=50\r\n\r\n[RACE]\r\nCARS=4\r\nTRACK=ks_silverstone\r\n\r\n[CAR_1]\r\nMODEL=mx5\r\n" ..
+    "DRIVER_NAME=Al\r\nAI_LEVEL=95\r\n\r\n[CAR_3]\r\nMODEL=mx5\r\nDRIVER_NAME=Cy\r\n\r\n[SESSION_0]\r\nTYPE=3\r\nLAPS=10\r\n"
+  local ini = RI.parse(text)
+  eq("ini: track read", ini.sections.RACE.TRACK, "ks_silverstone")
+  local e = RI.entries(ini)
+  eq("ini: entries in CAR_n order", table.concat({ e[1].name, e[2].name, e[3].name, e[4].name }, ","), "Saad Said,Al,Bea,Cy")
+  eq("ini: player flagged", e[1].isPlayer, true)
+  eq("ini: AI level kept", e[3].keys.AI_LEVEL, "100")
+
+  -- grid: Cy, Saad, Bea, Al -> player in slot 2, AI in grid order on CAR_1..3
+  local out, slot = RI.forSession(e, { "Cy", "Saad Said", "Bea", "Al" }, { name = "Race 1", type = 3, laps = 12, raceLaps = 12 })
+  eq("ini: player slot", slot, 2)
+  local back = RI.parse(out)
+  eq("ini: starting position written", back.sections.SESSION_0.STARTING_POSITION, "2")
+  eq("ini: AI grid order", back.sections.CAR_1.DRIVER_NAME .. "," .. back.sections.CAR_2.DRIVER_NAME .. "," ..
+    back.sections.CAR_3.DRIVER_NAME, "Cy,Bea,Al")
+  eq("ini: player stays CAR_0", back.sections.CAR_0.DRIVER_NAME, "Saad Said")
+  eq("ini: AI keeps its own level", back.sections.CAR_2.AI_LEVEL, "100")
+  eq("ini: car count", back.sections.RACE.CARS, "4")
+  eq("ini: race laps", back.sections.RACE.RACE_LAPS, "12")
+  eq("ini: race starts on the grid", back.sections.SESSION_0.SPAWN_SET, "START")
+  -- a driver missing from the grid goes to the back
+  local _, slot2 = RI.forSession(e, { "Al", "Bea", "Cy" }, { name = "Q", type = 2, minutes = 15 })
+  eq("ini: unlisted player to the back", slot2, 4)
+end
+
 print(("%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

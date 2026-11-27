@@ -138,3 +138,9 @@ Path: `Documents/Assetto Corsa/cfg/race.ini`. Sections from a 10-car Quick Race:
 - `[SESSION_0]`, `[SESSION_1]` and so on: `NAME`, `TYPE` (1 practice, 2 qualify, 3 race), `LAPS`, `DURATION_MINUTES`, `SPAWN_SET` (`START` or `PIT`), `STARTING_POSITION` (the **player's** grid slot, 1-based).
 - Other sections: `DYNAMIC_TRACK`, `TEMPERATURE`, `WEATHER`, `WIND`, `LIGHTING`, `GROOVE`, `LAP_INVALIDATOR`, `REMOTE` (`ACTIVE=0` offline), `RESTART` (`ACTIVE`: the flag `ac.restartAssettoCorsa` sets), `REPLAY`, `GHOST_CAR`, `OPTIONS` (`USE_MPH`), `BENCHMARK`.
 - **For M1:** a race meeting can carry the grid from qualifying by passing `[CAR_n]` and `[SESSION_n]` overrides to `ac.restartAssettoCorsa(raceIni)`. Only the player's slot is a session key; the AI grid follows `CAR_n` order. That needs confirming in-game.
+
+## Relaunching into a new session (verified in-game 2026-11-27, CSP 0.2.11, CM 0.8.2895)
+- `ac.restartAssettoCorsa(raceIniText)` merges the text into race.ini and restarts AC through Content Manager. CM keeps the merged file; it doesn't regenerate it. `[RESTART] ACTIVE` is back to 0 afterwards.
+- **The grid follows `CAR_n` order.** The AI fill the slots in `CAR_1..n` order around the player, and `[SESSION_0] STARTING_POSITION` places the player (CAR_0). Test: reversed AI and the player 10th came back exactly that way.
+- `[SESSION_0] NAME` becomes the session title in-game ("RELAUNCH TEST 3L").
+- **CM picks new random AI names at every launch from CM**, so a meeting must store its entry list and write every `DRIVER_NAME` back on each relaunch (`raceini.lua`).
