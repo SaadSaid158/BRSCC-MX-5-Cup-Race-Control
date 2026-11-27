@@ -21,7 +21,7 @@ Each milestone is a complete feature release.
   - the AI pit guard;
   - compatibility with older CSP versions.
 
-## M1 · v0.3: Race meeting
+## M1 · v0.3: Race meeting (in progress: built and sim-tested, in-game meeting run outstanding)
 *A BRSCC meeting is qualifying followed by 3 races (REGS 2.3.3). This makes it one connected event instead of separate CM sessions.*
 - A meeting file that remembers the event across sessions: the track, the session order, results, penalties and points.
 - **Qualifying rules:**

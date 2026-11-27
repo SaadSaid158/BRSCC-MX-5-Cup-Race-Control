@@ -29,9 +29,16 @@
 | Version on `main` | **v0.2.1** (CI green) |
 | Repo | `SaadSaid158/brscc-mx-5-cup-race-control` (private) |
 | Milestones on GitHub | M1–M6. **M1 is open**, issues #2–#6 |
-| Last in-game test | v0.2.0 on CSP 0.2.11, Silverstone International (see §7) |
-| v0.2.1 in-game | **not yet tested** |
+| Last in-game test | 2026-11-26/27 on CSP 0.2.11, Silverstone International: the v0.2.1 fixes, the windowed HUD, and an app-driven relaunch (see the update below) |
+| Branch in progress | `claude/mcp-access-check-f71546`, **not pushed, VERSION still 0.2.1**: M1 core built and sim-tested; the full meeting is not yet run in-game |
 | Releases | Pushing a tag `vX.Y.Z` makes Actions publish a release with the zip. The cloud session couldn't push tags or create releases (blocked by its policy); a local session probably can |
+
+**Update 2026-11-27 (local session; read this before §5):**
+- Jobs 1-3 of §5 are done. The 0.2.11 API was verified against the local SDK (`docs/API_NOTES.md`). v0.2.1 ran in-game; the bugs found are fixed (gaps poisoned by AC's `-DBL_MAX` pre-start clock, stalled grid cars not flagged, `uiScale` read from the wrong object). The test driver ("AI drives my car", Settings > Testing) works.
+- The HUD is now seven movable CSP windows (flags, lap strip, messages, timing, track limits, pit board, results): glass panels, Barlow Condensed, a white accent. Yellow is reserved for yellow flags. Arrange mode marks its sample content.
+- **M1 core is built:** `meeting.lua` (session order, qualifying, grids, grid drops, classification per NCR Ch.12 App.9 Art.1.11, points) and `raceini.lua` (race.ini read/write). The Race Control window starts a meeting and continues between sessions by relaunching AC. Relaunching and gridding were verified in-game; a full meeting has not run yet. The sim covers a full meeting (`tests/sim.lua` section 8).
+- **Next:** the in-game M1 run in `docs/TEST_PLAN_v0.3.0.md`, then the user's sign-off. After that, bump VERSION to 0.3.0, package, push, and close M1.
+- **Local setup:** AC is at `C:/Users/saad/Games/Assetto-Corsa/Assetto Corsa`. CM is the renamed `AssettoCorsa.exe`. LuaJIT is at `%LOCALAPPDATA%/Programs/LuaJIT/bin`. Never copy files into AC mid-race: CSP reloads the app and the session's ledger is lost.
 
 **Commit history (newest first):**
 - handoff and CLAUDE.md;
