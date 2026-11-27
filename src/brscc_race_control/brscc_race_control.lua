@@ -276,6 +276,77 @@ local function recordMeeting()
   saveMeeting(m)
 end
 
+-- Results window view: live order, then the provisional classification; qualifying by best valid lap.
+local function shortName(n)
+  local first, last = n:match("^(%S+)%s+(.+)$")
+  return (first and (first:sub(1, 1) .. ". " .. last) or n):upper()
+end
+local function resultsView()
+  if G.kind ~= "race" and G.kind ~= "qualifying" then return nil end
+  local m = meetingNow()
+  local cur = m and MT.current(m)
+  local rs = { rows = {} }
+  if G.kind == "race" then
+    local rows = raceRows()
+    local anyFinished = false
+    for _, r in ipairs(rows) do if r.finishMs then anyFinished = true end end
+    local sess = ac.getSession(sim.currentSessionIndex)
+    rs.title = (cur and cur.name or "Race"):upper()
+    rs.sub = (anyFinished and "PROVISIONAL" or "LIVE") .. ((sess and sess.laps or 0) > 0 and (" · " .. sess.laps .. " LAPS") or "")
+    if not anyFinished then
+      table.sort(rows, function(a, b) return ac.getCar(a.i).racePosition < ac.getCar(b.i).racePosition end)
+      for k, r in ipairs(rows) do
+        rs.rows[k] = { pos = r.dsq and "DSQ" or tostring(k), name = r.name:upper(), laps = r.laps, time = "-",
+          pen = (r.penaltyS or 0) > 0 and ("+" .. r.penaltyS .. " s") or "", pts = "-", dsq = r.dsq }
+      end
+    else
+      local cls, fastest = MT.classifyRace(rows)
+      local lead = cls[1]
+      local leadT = lead.finishMs and (lead.finishMs + (lead.penaltyS or 0) * 1000)
+      for k, r in ipairs(cls) do
+        local t = "-"
+        if r.finishMs then
+          local fin = r.finishMs + (r.penaltyS or 0) * 1000
+          if k == 1 then t = fmtTime(fin)
+          elseif r.laps < lead.laps then t = ("%d LAP%s"):format(lead.laps - r.laps, lead.laps - r.laps > 1 and "S" or "")
+          elseif leadT then t = ("+%.3f"):format((fin - leadT) / 1000) end
+        end
+        rs.rows[k] = { pos = r.dsq and "DSQ" or (r.classified and tostring(k) or (r.finishMs and "NC" or tostring(k))),
+          name = r.name:upper(), laps = r.laps, time = t,
+          pen = r.dsq and "BLACK" or ((r.penaltyS or 0) > 0 and ("+" .. r.penaltyS .. " s") or ""),
+          pts = tostring(r.points), muted = r.finishMs ~= nil and not r.classified, dsq = r.dsq }
+        if r.name == fastest and r.bestMs then
+          rs.note = ("FASTEST VALID LAP · %s %s (+1)"):format(shortName(r.name), fmtLap(r.bestMs))
+        end
+      end
+    end
+  else
+    local rows = {}
+    for i = 0, sim.carsCount - 1 do
+      if ac.getCar(i) then rows[#rows + 1] = { name = name(i), best = bestValid(i), laps = #(G.laps[i] or {}) } end
+    end
+    table.sort(rows, function(a, b)
+      if (a.best ~= nil) ~= (b.best ~= nil) then return a.best ~= nil end
+      if a.best and a.best ~= b.best then return a.best < b.best end
+      return a.name < b.name
+    end)
+    rs.title = (cur and cur.name or "Qualifying"):upper()
+    rs.sub = "BEST VALID LAP"
+    for k, r in ipairs(rows) do
+      rs.rows[k] = { pos = tostring(k), name = r.name:upper(), laps = r.laps,
+        time = r.best and (k == 1 and fmtLap(r.best) or ("+%.3f"):format((r.best - rows[1].best) / 1000)) or "-",
+        pen = "", pts = "", muted = r.laps < R.minQualifyingLaps }
+    end
+    rs.note = ("FEWER THAN %d LAPS: BACK OF THE GRID (REGS 2.3.2)"):format(R.minQualifyingLaps)
+  end
+  if m then
+    rs.standings = {}
+    for _, st in ipairs(MT.standings(m)) do rs.standings[#rs.standings + 1] = { shortName(st.name), st.points } end
+    rs.standingsNote = (G.meetingRecorded and "AFTER " or "BEFORE ") .. ((cur and cur.name) or "THE MEETING"):upper()
+  end
+  return rs
+end
+
 -- report ---------------------------------------------------------------------------------
 local function writeReport(force)
   if (G.reportWritten and not force) or not G.kind then return end
@@ -725,6 +796,8 @@ local function buildView()
 
   -- driver's record
   local tlText, severe = trackLimitsText(d, me)
+  if not G.resultsAt or now - G.resultsAt > 0.5 then G.resultsCache, G.resultsAt = resultsView(), now end   -- 2 Hz
+  v.results = G.resultsCache
   v.record = { tl = d.trackLimits, tlText = tlText, tlSevere = severe, timePen = d.timePenaltyS, dsq = d.dsq or G.black[0] }
   if pend then v.record.dtLapsLeft = math.max(0, R.serveWithinLaps - (me.lapCount - pend.notifiedLap)) end
 
@@ -765,6 +838,7 @@ function script.rcWinMessages() hudWindow(HP.messages) end
 function script.rcWinTiming() hudWindow(HP.timing) end
 function script.rcWinRecord() hudWindow(HP.record) end
 function script.rcWinPitBoard() hudWindow(HP.pitBoard) end
+function script.rcWinResults() hudWindow(HP.results) end
 
 -- Settings window ---------------------------------------------------------------------------
 local function radio(label, key, value)

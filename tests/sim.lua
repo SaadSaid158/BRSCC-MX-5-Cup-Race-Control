@@ -165,9 +165,13 @@ for _, k in ipairs({ "drawRectFilled", "drawRect", "drawTriangleFilled", "drawCi
 end
 -- a default layout, as a driver might place the panels on a 1920x1080 screen
 local WINDOWS = { { "rcWinFlags", 560, 24 }, { "rcWinStrip", 640, 180 }, { "rcWinMessages", 600, 258 },
-  { "rcWinTiming", 36, 640 }, { "rcWinRecord", 1584, 640 }, { "rcWinPitBoard", 1680, 340 } }
+  { "rcWinTiming", 36, 640 }, { "rcWinRecord", 1584, 640 }, { "rcWinPitBoard", 1680, 340 }, { "rcWinResults", 640, 320 } }
 _G.drawWindows = function()
-  for _, w in ipairs(WINDOWS) do OX, OY = w[2], w[3]; script[w[1]](); OX, OY = 0, 0 end
+  FRAME = (FRAME or 0) + 1
+  for _, w in ipairs(WINDOWS) do
+    -- the results table is ~120 text draws; the harness's text measuring is slow, so draw it every 20th frame
+    if w[1] ~= "rcWinResults" or FRAME % 20 == 0 then OX, OY = w[2], w[3]; script[w[1]](); OX, OY = 0, 0 end
+  end
 end
 _G.rgbm = setmetatable({ colors = {} }, { __call = function(_, r, g, b, m) return { r, g, b, m, r = r, g = g, b = b, mult = m } end })
 
@@ -440,6 +444,12 @@ do
     check("meeting: all finishers classified (Art.1.11)", cls == N, cls)
     check("meeting: winner has 100 points", r.rows[1].points == 100 or r.rows[1].points == 101, r.rows[1].points)
   end
+  tick(20)
+  clearDraws(); script.rcWinResults()
+  local txt = table.concat(draws, string.char(10))
+  check("results window: race 1, provisional, with meeting standings",
+    txt:find(">RACE 1<") ~= nil and txt:find("PROVISIONAL") ~= nil and txt:find(">MEETING<") ~= nil, txt:sub(1, 300))
+  check("results window drew without errors", _G.hudError == nil, _G.hudError)
   _G.press = "Continue to Race 2"; tick(1)
   check("meeting: race 2 relaunch from race 1's result", #RESTARTS == 3 and
     RI.parse(RESTARTS[3]).sections.CAR_1.DRIVER_NAME == (r and r.order[1] ~= "Driver 0" and r.order[1] or r and r.order[2]),

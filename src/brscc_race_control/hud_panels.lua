@@ -19,6 +19,15 @@ local DEMO = {
     ahead = { value = 0.84 }, behindName = "KOLDERS", behind = { value = 1.2 }, last = "1:15.402", best = "1:15.118" },
   record = { tl = 2, tlText = "2 of 6 · next: +5 s", timePen = 0 },
   pit = { "P4", "-0.8", "L3" },
+  results = { title = "RACE 1", sub = "PROVISIONAL · 10 LAPS",
+    rows = {
+      { pos = "1", name = "VINCENT ANEMA", laps = 10, time = "14:26.118", pen = "", pts = "100" },
+      { pos = "2", name = "BRUCE DAHLGREN", laps = 10, time = "+1.904", pen = "", pts = "99" },
+      { pos = "3", name = "SAAD SAID", laps = 10, time = "+6.233", pen = "+5 s", pts = "96" },
+      { pos = "NC", name = "MAURO ROCCA", laps = 7, time = "-", pen = "", pts = "0", muted = true },
+    },
+    note = "FASTEST VALID LAP · DAHLGREN 1:25.380 (+1)",
+    standings = { { "V. ANEMA", 198 }, { "S. SAID", 194 }, { "B. DAHLGREN", 193 } }, standingsNote = "AFTER RACE 2 OF 3" },
 }
 
 -- ── flags ─────────────────────────────────────────────────────────────────────────────────
@@ -172,6 +181,63 @@ function M.pitBoard(v, arrange)
   if not lines then return end
   local w, h = H.pitBoard(lines, v.scale)
   if lines == DEMO.pit then H.sample(w, C.black) end
+  return w, h
+end
+
+-- ── results: the session's classification, and the meeting standings beside it ──────────
+function M.results(v, arrange)
+  local rs = v.results or (arrange and DEMO.results)
+  if not rs then return end
+  local s = v.scale
+  local pad, rowH = 14 * s, 22 * s
+  local cols = { { "POS", 34 }, { "DRIVER", 170 }, { "LAPS", 40, 1 }, { "TIME / GAP", 92, 1 }, { "PEN", 52, 1 }, { "PTS", 40, 1 } }
+  local tableW = 0
+  for _, c in ipairs(cols) do tableW = tableW + c[2] * s end
+  local standW = rs.standings and 190 * s or 0
+  local w = pad + tableW + (rs.standings and (18 * s + standW) or 0) + pad
+  local nRows = math.max(#rs.rows, rs.standings and #rs.standings or 0)
+  local h = 40 * s + (nRows + 1) * rowH + (rs.note and 24 * s or 8 * s) + 8 * s
+  H.panel(w, h)
+  H.text(rs.title, 22 * s, pad, 6 * s, C.ink, F.num)
+  if rs.sub then H.text(rs.sub, 12 * s, pad + tableW, 14 * s, C.mute, F.label, 1) end
+  local y = 40 * s
+  local x = pad
+  for _, c in ipairs(cols) do
+    H.text(c[1], 11 * s, c[3] and (x + c[2] * s - 6 * s) or (x + 6 * s), y + 5 * s, C.mute, F.label, c[3] and 1 or 0)
+    x = x + c[2] * s
+  end
+  y = y + rowH
+  for k, r in ipairs(rs.rows) do
+    if k % 2 == 1 then H.rect(pad, y, tableW, rowH, v.glass and C.inset or C.plate, H.inner(7)) end
+    local vals = { r.pos, r.name, tostring(r.laps), r.time, r.pen, r.pts }
+    x = pad
+    for i, c in ipairs(cols) do
+      local col = r.muted and C.mute or C.ink
+      if i == 1 and r.dsq then col = C.red end
+      if i == 5 and r.pen ~= "" then col = r.dsq and C.red or C.amber end
+      local font = (i == 1 or i == 4 or i == 6) and F.num or F.body
+      H.text(vals[i] or "", 15 * s, c[3] and (x + c[2] * s - 6 * s) or (x + 6 * s), y + 2 * s, col, font, c[3] and 1 or 0)
+      x = x + c[2] * s
+    end
+    y = y + rowH
+  end
+  if rs.note then H.text(rs.note, 11 * s, pad, y + 8 * s, C.mute, F.label) end
+  if rs.standings then
+    local sx = pad + tableW + 18 * s
+    H.rect(sx - 9 * s, 10 * s, 1, h - 20 * s, C.rule)
+    H.text("MEETING", 22 * s, sx, 6 * s, C.ink, F.num)
+    local sy = 40 * s + rowH
+    H.text("PTS", 11 * s, sx + standW - 6 * s, 40 * s + 5 * s, C.mute, F.label, 1)
+    for k, st in ipairs(rs.standings) do
+      if k % 2 == 1 then H.rect(sx, sy, standW, rowH, v.glass and C.inset or C.plate, H.inner(7)) end
+      H.text(tostring(k), 15 * s, sx + 6 * s, sy + 2 * s, C.ink, F.num)
+      H.text(st[1], 15 * s, sx + 28 * s, sy + 2 * s, C.ink)
+      H.text(tostring(st[2]), 15 * s, sx + standW - 6 * s, sy + 2 * s, C.ink, F.num, 1)
+      sy = sy + rowH
+    end
+    if rs.standingsNote then H.text(rs.standingsNote, 11 * s, sx, h - 24 * s, C.mute, F.label) end
+  end
+  if rs == DEMO.results then H.sample(w) end
   return w, h
 end
 
