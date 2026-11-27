@@ -452,7 +452,15 @@ local update
 -- invalidates laps). Deliberately not saved in settings, so it can never be left on for a real race.
 -- The player car is still judged like every other car.
 local testDriver, testDriverApplied = false, false
+local applyLayout   -- defined with the HUD windows below
+local layoutTried = false
 function script.rcUpdate(dt)
+  -- first launch: place the panels once, a couple of seconds in (the app windows exist by then); one try
+  -- per session, so a CSP that lists the windows differently costs nothing
+  if not SET.get("layoutApplied") and not layoutTried and G and G.clock > 2 then
+    layoutTried = true
+    CX.guard("layout", function() if applyLayout() > 0 then SET.set("layoutApplied", true) end end)
+  end
   if testDriver ~= testDriverApplied then
     if CX.guard("testDriver", physics.setCarAutopilot, testDriver, false) then testDriverApplied = testDriver end
   end
@@ -832,6 +840,38 @@ local function hudWindow(draw)
     if not G.hudErrLogged then G.hudErrLogged = true; ac.log("BRSCC RC HUD error: " .. G.hudErr) end
   end
 end
+-- Default layout, placed once on first launch (and from Settings > Display): the flag station top
+-- centre, the strip and messages under it, timing left, record right, pit board right of centre,
+-- results in the middle. Fractions of the screen; CSP then remembers wherever the driver drags them.
+local LAYOUT = {
+  ["BRSCC Flags"] = { 0.5, 0.03, true }, ["BRSCC Lap & sectors"] = { 0.5, 0.17, true },
+  ["BRSCC Messages"] = { 0.5, 0.24, true }, ["BRSCC Timing"] = { 0.02, 0.60 },
+  ["BRSCC Track limits & penalties"] = { 0.84, 0.60 }, ["BRSCC Pit board"] = { 0.86, 0.28 },
+  ["BRSCC Results"] = { 0.5, 0.40, true },
+}
+applyLayout = function(force)
+  local ui_ = 1
+  pcall(function() ui_ = ac.getUI().uiScale or 1 end)
+  local W, H = CX.get(sim, "windowWidth", 1920) / ui_, CX.get(sim, "windowHeight", 1080) / ui_
+  local ours = {}
+  for _, win in ipairs(ac.getAppWindows() or {}) do if LAYOUT[win.title] then ours[#ours + 1] = win end end
+  -- untouched = every panel still stacked where CSP spawned them; a layout the driver made is left alone
+  if not force then
+    for _, win in ipairs(ours) do
+      local a, b = win.position, ours[1].position
+      if a and b and (math.abs(a.x - b.x) > 2 or math.abs(a.y - b.y) > 2) then return #ours end
+    end
+  end
+  for _, win in ipairs(ours) do
+    local spot, acc = LAYOUT[win.title], ac.accessAppWindow(win.name)
+    if acc and acc:valid() then
+      local w = win.size and win.size.x or 0
+      acc:move(vec2(spot[1] * W - (spot[3] and w / 2 or 0), spot[2] * H))
+    end
+  end
+  return #ours
+end
+
 function script.rcWinFlags() hudWindow(HP.flags) end
 function script.rcWinStrip() hudWindow(HP.strip) end
 function script.rcWinMessages() hudWindow(HP.messages) end
@@ -874,6 +914,7 @@ function script.rcSettings(dt)
       if ui.checkbox("Arrange panels: show every panel with sample content", arrange) then arrange = not arrange end
       ui.textWrapped("Each panel is its own app window: drag it where you want it, and switch it on or off " ..
         "from the app bar like any other app. CSP remembers where you put them.")
+      if ui.button("Reset panel layout") then CX.guard("layout", applyLayout, true) end
     end)
     ui.tabItem("Rules", nil, function()
       ui.header("Track limits (NCR Ch.12 App.7 1.6 / 1.11)")

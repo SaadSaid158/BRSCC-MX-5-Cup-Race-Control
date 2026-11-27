@@ -73,6 +73,17 @@ _G.ac = {
   log = function(m) logs[#logs + 1] = tostring(m); if tostring(m):find("HUD error") then _G.hudError = m end end,
   onSessionStart = function(f) SESSION_START = f end,
   restartAssettoCorsa = function(text) RESTARTS[#RESTARTS + 1] = text end,
+  getAppWindows = function()
+    local t = {}
+    for _, n in ipairs({ "BRSCC Flags", "BRSCC Timing", "BRSCC Results", "Some Other App" }) do
+      t[#t + 1] = { name = n:lower():gsub(" ", "_"), title = n, size = { x = 300, y = 120 },
+        position = LAYOUT_MOVED and { x = #t * 100, y = 0 } or { x = 0, y = 0 } }   -- untouched: all stacked
+    end
+    return t
+  end,
+  accessAppWindow = function(n)
+    return { valid = function() return true end, move = function(self, p) rec("move", n, p.x, p.y); return self end }
+  end,
   onCarCollision = function() end,
 }
 _G.physics = {
@@ -378,6 +389,15 @@ if saved then
   local n = 0
   for line in saved:gmatch("[^\r\n]+") do n = n + 1; if n <= 70 then print(line) end end
   print("---------------------")
+end
+
+-- 7b. first launch: the default panel layout was placed once, only our windows moved
+do
+  local moves, other = 0, false
+  for _, c in ipairs(calls) do if c[1] == "move" then moves = moves + 1; if c[2] == "some_other_app" then other = true end end end
+  check("layout: our panels placed once on first launch", moves == 3, moves)
+  check("layout: other apps left alone", not other)
+  check("layout: remembered", require("settings").get("layoutApplied") == true)
 end
 
 -- 8. a full meeting (M1): start it, qualify, relaunch, race 1, continue to race 2.
