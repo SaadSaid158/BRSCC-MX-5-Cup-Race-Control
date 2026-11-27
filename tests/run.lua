@@ -395,5 +395,21 @@ do
   eq("standings leader", MT.standings(m)[1].name, "Me")
 end
 
+-- race numbers --------------------------------------------------------------------------------------
+do
+  local RN = require("racenum")
+  eq("number from ui_skin.json", RN.fromSkin("07_max5_anemaracing_rood", '{ "number": "7", "priority": 4 }'), "7")
+  eq("placeholder 0 -> folder prefix", RN.fromSkin("01_max5_blue_and_white", '{ "number": "0" }'), "01")
+  eq("junk number -> folder digits", RN.fromSkin("RotterGraafRacing_76_Wilco", '{ "number": "DynamixxRED_Lenaerts" }'), "76")
+  eq("digits at the end of the folder", RN.fromSkin("KrabbyRacing88", nil), "88")
+  eq("numeric json value", RN.fromSkin("x", '{ "number": 46 }'), "46")
+  eq("00 prefix is no number", RN.fromSkin("00_max5-red-red", '{ "number": "0" }'), nil)
+  eq("nothing usable", RN.fromSkin("UGX_Black", '{ "number": "" }'), nil)
+  local a = RN.assign({ [0] = "01", [1] = nil, [2] = "90", [3] = nil }, 4)
+  eq("unnumbered car gets a free number from 90", a[1], "91")
+  eq("second unnumbered car gets the next free one", a[3], "92")
+  eq("painted numbers kept", a[0] .. "," .. a[2], "01,90")
+end
+
 print(("%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

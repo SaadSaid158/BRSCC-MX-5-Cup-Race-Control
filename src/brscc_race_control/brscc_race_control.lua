@@ -14,6 +14,7 @@ local AI = require("ai")
 local HP = require("hud_panels")
 local MT = require("meeting")
 local RI = require("raceini")
+local RN = require("racenum")
 local HC = require("hud_common")
 local SET = require("settings")
 local AP = require("autoposts")
@@ -110,6 +111,21 @@ local function loadMap()
 end
 
 -- session lifecycle ---------------------------------------------------------------
+-- Race numbers from each car's skin (racenum.lua); read once per session.
+local function loadNumbers()
+  local found = {}
+  for i = 0, sim.carsCount - 1 do
+    pcall(function()
+      local car, skin = ac.getCarID(i), ac.getCarSkinID(i)
+      if car and skin then
+        local path = ac.getFolder(ac.FolderID.ContentCars) .. "/" .. car .. "/skins/" .. skin .. "/ui_skin.json"
+        found[i] = RN.fromSkin(skin, io.load(path))
+      end
+    end)
+  end
+  return RN.assign(found, sim.carsCount)
+end
+
 local function init()
   if G then
     AI.releaseAll()
@@ -123,7 +139,7 @@ local function init()
     excursions = { "t_s,car,ai,spline,duration_s,max_wheels_outside,max_wheels_beyond,surfaces_fl_fr_rl_rr,counted" },
     laps = {}, finished = {}, contacts = {},
     messages = {}, log = {}, lastFlag = nil, reportWritten = false, mapSource = mapSource,
-    gaps = GP.new(), lineT = nil, clock = 0,
+    gaps = GP.new(), lineT = nil, clock = 0, numbers = loadNumbers(),
     trace = { "t_s,car,ai,spline,lap,kmh,ai_cap_kmh,flag_level,hazard,wheels_out,in_pit,in_box,req_pit,fuel_l,fuel_per_lap,engine_life,gearbox_dmg" }, traceT = 0,
   }
   for i = 0, sim.carsCount - 1 do
@@ -296,7 +312,7 @@ local function resultsView()
     if not anyFinished then
       table.sort(rows, function(a, b) return ac.getCar(a.i).racePosition < ac.getCar(b.i).racePosition end)
       for k, r in ipairs(rows) do
-        rs.rows[k] = { pos = r.dsq and "DSQ" or tostring(k), name = r.name:upper(), laps = r.laps, time = "-",
+        rs.rows[k] = { pos = r.dsq and "DSQ" or tostring(k), no = G.numbers[r.i], name = r.name:upper(), laps = r.laps, time = "-",
           pen = (r.penaltyS or 0) > 0 and ("+" .. r.penaltyS .. " s") or "", pts = "-", dsq = r.dsq }
       end
     else
@@ -312,7 +328,7 @@ local function resultsView()
           elseif leadT then t = ("+%.3f"):format((fin - leadT) / 1000) end
         end
         rs.rows[k] = { pos = r.dsq and "DSQ" or (r.classified and tostring(k) or (r.finishMs and "NC" or tostring(k))),
-          name = r.name:upper(), laps = r.laps, time = t,
+          no = G.numbers[r.i], name = r.name:upper(), laps = r.laps, time = t,
           pen = r.dsq and "BLACK" or ((r.penaltyS or 0) > 0 and ("+" .. r.penaltyS .. " s") or ""),
           pts = tostring(r.points), muted = r.finishMs ~= nil and not r.classified, dsq = r.dsq }
         if r.name == fastest and r.bestMs then
@@ -323,7 +339,7 @@ local function resultsView()
   else
     local rows = {}
     for i = 0, sim.carsCount - 1 do
-      if ac.getCar(i) then rows[#rows + 1] = { name = name(i), best = bestValid(i), laps = #(G.laps[i] or {}) } end
+      if ac.getCar(i) then rows[#rows + 1] = { i = i, name = name(i), best = bestValid(i), laps = #(G.laps[i] or {}) } end
     end
     table.sort(rows, function(a, b)
       if (a.best ~= nil) ~= (b.best ~= nil) then return a.best ~= nil end
@@ -333,7 +349,7 @@ local function resultsView()
     rs.title = (cur and cur.name or "Qualifying"):upper()
     rs.sub = "BEST VALID LAP"
     for k, r in ipairs(rows) do
-      rs.rows[k] = { pos = tostring(k), name = r.name:upper(), laps = r.laps,
+      rs.rows[k] = { pos = tostring(k), no = G.numbers[r.i], name = r.name:upper(), laps = r.laps,
         time = r.best and (k == 1 and fmtLap(r.best) or ("+%.3f"):format((r.best - rows[1].best) / 1000)) or "-",
         pen = "", pts = "", muted = r.laps < R.minQualifyingLaps }
     end
@@ -374,12 +390,12 @@ local function writeReport(force)
     -- classification per NCR Ch.12 App.9 Art.1.11 (meeting.lua): 80% of the winner's laps, across the
     -- line within 4 minutes of the winner; time penalties added to the finish time
     local cls, fastestName = MT.classifyRace(raceRows())
-    w("POS  DRIVER                      LAPS  FINISH(+PEN)   PEN   TL  PP  POINTS")
+    w("POS  NO   DRIVER                      LAPS  FINISH(+PEN)   PEN   TL  PP  POINTS")
     for pos, r in ipairs(cls) do
       local d = G.drivers[r.i]
       local fin = r.finishMs and fmtTime(r.finishMs + (r.penaltyS or 0) * 1000) or "-"
       w(("%-4s %s %4d  %-12s %4ds %3d %3d  %d"):format(r.dsq and "DSQ" or (r.classified and tostring(pos) or "NC"),
-        pad(r.name, 27), r.laps, r.classified and fin or ("NC " .. fin), r.penaltyS or 0, d.trackLimits, d.penaltyPoints, r.points))
+        pad("#" .. (G.numbers[r.i] or "?"), 4) .. " " .. pad(r.name, 27), r.laps, r.classified and fin or ("NC " .. fin), r.penaltyS or 0, d.trackLimits, d.penaltyPoints, r.points))
     end
     local fl
     for _, r in ipairs(cls) do if r.name == fastestName then fl = { id = r.i, ms = r.bestMs } end end
@@ -729,7 +745,7 @@ local function buildView()
   end
 
   -- personal boards (black flag > drive-through > black/white)
-  local num = "1"   -- TODO: real race number from the skin's ui_skin.json
+  local num = G.numbers[0] or "?"   -- your race number, from the skin (racenum.lua)
   local personal = nil
   local pend = d and d.pending[1]
   if G.black[0] then

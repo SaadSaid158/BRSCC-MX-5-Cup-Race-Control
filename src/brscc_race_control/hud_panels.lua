@@ -21,10 +21,10 @@ local DEMO = {
   pit = { "P4", "-0.8", "L3" },
   results = { title = "RACE 1", sub = "PROVISIONAL · 10 LAPS",
     rows = {
-      { pos = "1", name = "VINCENT ANEMA", laps = 10, time = "14:26.118", pen = "", pts = "100" },
-      { pos = "2", name = "BRUCE DAHLGREN", laps = 10, time = "+1.904", pen = "", pts = "99" },
-      { pos = "3", name = "SAAD SAID", laps = 10, time = "+6.233", pen = "+5 s", pts = "96" },
-      { pos = "NC", name = "MAURO ROCCA", laps = 7, time = "-", pen = "", pts = "0", muted = true },
+      { pos = "1", no = "83", name = "VINCENT ANEMA", laps = 10, time = "14:26.118", pen = "", pts = "100" },
+      { pos = "2", no = "21", name = "BRUCE DAHLGREN", laps = 10, time = "+1.904", pen = "", pts = "99" },
+      { pos = "3", no = "01", name = "SAAD SAID", laps = 10, time = "+6.233", pen = "+5 s", pts = "96" },
+      { pos = "NC", no = "06", name = "MAURO ROCCA", laps = 7, time = "-", pen = "", pts = "0", muted = true },
     },
     note = "FASTEST VALID LAP · DAHLGREN 1:25.380 (+1)",
     standings = { { "V. ANEMA", 198 }, { "S. SAID", 194 }, { "B. DAHLGREN", 193 } }, standingsNote = "AFTER RACE 2 OF 3" },
@@ -190,7 +190,7 @@ function M.results(v, arrange)
   if not rs then return end
   local s = v.scale
   local pad, rowH = 14 * s, 22 * s
-  local cols = { { "POS", 34 }, { "DRIVER", 170 }, { "LAPS", 40, 1 }, { "TIME / GAP", 92, 1 }, { "PEN", 52, 1 }, { "PTS", 40, 1 } }
+  local cols = { { "POS", 34 }, { "NO", 36 }, { "DRIVER", 160 }, { "LAPS", 40, 1 }, { "TIME / GAP", 92, 1 }, { "PEN", 52, 1 }, { "PTS", 40, 1 } }
   local tableW = 0
   for _, c in ipairs(cols) do tableW = tableW + c[2] * s end
   local standW = rs.standings and 190 * s or 0
@@ -209,13 +209,13 @@ function M.results(v, arrange)
   y = y + rowH
   for k, r in ipairs(rs.rows) do
     if k % 2 == 1 then H.rect(pad, y, tableW, rowH, v.glass and C.inset or C.plate, H.inner(7)) end
-    local vals = { r.pos, r.name, tostring(r.laps), r.time, r.pen, r.pts }
+    local vals = { r.pos, r.no or "", r.name, tostring(r.laps), r.time, r.pen, r.pts }
     x = pad
     for i, c in ipairs(cols) do
       local col = r.muted and C.mute or C.ink
       if i == 1 and r.dsq then col = C.red end
-      if i == 5 and r.pen ~= "" then col = r.dsq and C.red or C.amber end
-      local font = (i == 1 or i == 4 or i == 6) and F.num or F.body
+      if i == 6 and r.pen ~= "" then col = r.dsq and C.red or C.amber end
+      local font = (i == 1 or i == 2 or i == 5 or i == 7) and F.num or F.body
       H.text(vals[i] or "", 15 * s, c[3] and (x + c[2] * s - 6 * s) or (x + 6 * s), y + 2 * s, col, font, c[3] and 1 or 0)
       x = x + c[2] * s
     end

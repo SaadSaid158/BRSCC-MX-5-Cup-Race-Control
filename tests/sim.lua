@@ -384,7 +384,7 @@ if saved then
   check("report marked provisional", saved:find("PROVISIONAL") ~= nil)
   check("report has compatibility section", saved:find("COMPATIBILITY") ~= nil)
   if OLD then check("report lists the missing CSP fields", saved:find("isRequestingPitStop") ~= nil) end
-  check("player DSQ in report", saved:find("DSQ%s+Driver 0") ~= nil)
+  check("player DSQ in report", saved:find("DSQ%s+#%d+%s+Driver 0") ~= nil)
   print("---- report head ----")
   local n = 0
   for line in saved:gmatch("[^\r\n]+") do n = n + 1; if n <= 70 then print(line) end end
